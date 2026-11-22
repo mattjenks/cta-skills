@@ -176,3 +176,91 @@ def test_skill_frontmatter():
         description = fields.get("description", "")
         assert 0 < len(description) <= 1024, (path, len(description))
         assert len(text.splitlines()) <= 500, (path, len(text.splitlines()))
+
+
+BUILD_DIR = ROOT / "plugins" / "build"
+BUILD_HOOKS_JSON = BUILD_DIR / "hooks" / "hooks.json"
+
+
+def _build_hook_entries():
+    data = json.loads(BUILD_HOOKS_JSON.read_text())
+    for event, groups in data["hooks"].items():
+        for group in groups:
+            for hook in group["hooks"]:
+                yield event, group, hook
+
+
+def _build_command(script):
+    return next(
+        h["command"] for _, _, h in _build_hook_entries() if h["command"].endswith(f'hooks/{script}"')
+    ).replace("${CLAUDE_PLUGIN_ROOT}", str(BUILD_DIR))
+
+
+def test_build_hooks_json_commands_exist_and_run_through_uv():
+    entries = list(_build_hook_entries())
+    assert {e for e, _, _ in entries} == {"PreToolUse"}
+    assert {Path(h["command"]).name.rstrip('"') for _, _, h in entries} == {"security_gate.py", "finding_guard.py"}
+    for _, _, hook in entries:
+        assert hook["command"].startswith("uv run --script "), hook["command"]
+        match = re.search(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"', hook["command"])
+        assert match, hook["command"]
+        path = BUILD_DIR / match.group(1)
+        assert path.is_file(), path
+        assert os.access(path, os.X_OK), f"not executable: {path}"
+
+
+def test_build_hook_matchers_and_timeouts():
+    by_script = {Path(h["command"]).name.rstrip('"'): (g["matcher"], h["timeout"])
+                 for _, g, h in _build_hook_entries()}
+    assert by_script["security_gate.py"] == ("Bash", 120)
+    assert by_script["finding_guard.py"] == ("Write|Edit|MultiEdit|Bash", 15)
+
+
+def test_wired_finding_guard_blocks_and_allows():
+    command = _build_command("finding_guard.py")
+
+    def run(tool_name, tool_input):
+        return subprocess.run(command, shell=True, capture_output=True, text=True,
+                              input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}))
+
+    blocked = run("Write", {"file_path": "x/security.json",
+                            "content": json.dumps([{"status": "accepted-risk"}])})
+    assert blocked.returncode == 2, blocked.stderr
+    assert "only Matt closes findings" in blocked.stderr
+    allowed = run("Write", {"file_path": "x/security.json",
+                            "content": json.dumps([{"status": "proposed-false-positive"}])})
+    assert allowed.returncode == 0, allowed.stderr
+
+
+def test_wired_security_gate_allows_non_commit_and_blocks_missing_scanners(tmp_path):
+    import shutil
+
+    command = _build_command("security_gate.py")
+    # PATH with only uv and git: no scanner can be found, whatever the machine has installed
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("uv", "git"):
+        (bin_dir / tool).symlink_to(shutil.which(tool))
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin"}
+    env.pop("GIT_DIR", None)
+
+    def run(cmd, cwd):
+        return subprocess.run(
+            command, shell=True, capture_output=True, text=True, env=env,
+            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}),
+        )
+
+    assert run("ls", tmp_path).returncode == 0
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git_env = {**env, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    for args in (["init", "-q"], ["config", "user.name", "Ada"], ["config", "user.email", "ada@example.invalid"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, env=git_env)
+    (repo / "a.py").write_text("x = 1\n")
+    subprocess.run(["git", "-C", str(repo), "add", "a.py"], check=True, env=git_env)
+    assert run("git commit -m x", repo).returncode == 0  # not gated: no run, no security.toml
+    (repo / ".cta").mkdir()
+    (repo / ".cta" / "active-build").write_text("{}")
+    blocked = run("git commit -m x", repo)
+    assert blocked.returncode == 2, blocked.stderr
+    assert "install semgrep, gitleaks" in blocked.stderr
