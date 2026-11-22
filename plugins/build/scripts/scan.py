@@ -51,8 +51,12 @@ other non-regular entries (submodule gitlinks) are `info` `scan.skipped-other:<p
 are removed from what semgrep sees, but gitleaks scans their content under a renamed
 name it cannot honour. A regular file that cannot be read is `high` `scan.unreadable:<path>`.
 All git (and gitleaks) subprocesses run without inherited GIT_DIR/GIT_WORK_TREE/
-GIT_INDEX_FILE etc.; only full_scan's temporary index sets GIT_INDEX_FILE. Semgrep
-runs with `--disable-nosem` so inline `nosemgrep` comments in the repository cannot hide findings.
+GIT_INDEX_FILE etc.; only full_scan's temporary index sets GIT_INDEX_FILE. git config
+from GIT_CONFIG_* variables, -c parameters, and global/system files is not used
+either (GIT_CONFIG_NOSYSTEM=1, GIT_CONFIG_GLOBAL=/dev/null). Ignore files are
+classified (binary/symlink/unreadable) like any other file before they are renamed or
+removed. Semgrep runs with `--no-git-ignore` and `--disable-nosem` so inline
+`nosemgrep` comments in the repository cannot hide findings.
 
 gitleaks never uses the user's working tree as its source, because it reads
 `<source>/.gitleaksignore` regardless of --config. fast_scan runs `gitleaks dir`
@@ -92,7 +96,10 @@ from pathlib import Path
 from findings import Finding, check_ref, git_env
 
 SCANNERS = {
-    "semgrep": ["semgrep", "--config", "p/default", "--error", "--json", "--disable-nosem"],
+    # --no-git-ignore: semgrep neither calls git nor reads .gitignore, so an export that
+    # sits inside some outer work tree is never filtered by that project's git state
+    "semgrep": ["semgrep", "--config", "p/default", "--error", "--json", "--disable-nosem",
+                "--no-git-ignore"],
     "gitleaks": [
         "gitleaks", "git", "--report-format", "json", "--redact", "--no-banner", "--no-color",
         "--ignore-gitleaks-allow",
@@ -282,8 +289,6 @@ def _scannable(root: Path, names: list[bytes]) -> tuple[list[str], list[Finding]
     skipped: list[Finding] = []
     for raw in names:
         rel = os.fsdecode(raw)
-        if os.path.basename(rel) in _IGNORE_FILES:
-            continue
         fp = root / rel
         try:
             if fp.is_symlink():
@@ -304,6 +309,8 @@ def _scannable(root: Path, names: list[bytes]) -> tuple[list[str], list[Finding]
             else:
                 skipped.append(_skip("binary", rel, "high", "contains NUL bytes (binary or UTF-16)"))
             continue
+        if os.path.basename(rel) in _IGNORE_FILES:
+            continue  # classified like any file above; gitleaks scans it, semgrep does not
         keep.append("./" + rel)
     return keep, skipped
 
@@ -673,10 +680,10 @@ def full_scan(repo: Path, base: str, run=subprocess.run, which=shutil.which,
         env = git_env(GIT_INDEX_FILE=str(tmp_path / "index"))  # deliberate temp index
         _git(repo, ["read-tree", head_sha], run, env=env)
         _export(repo, root, run, None, env=env)
-        _clean_for_semgrep(root)
-        paths, skipped = _scannable(root, names)
+        paths, skipped = _scannable(root, names)  # before ignore files are removed
         found += skipped
         linked = _remove_symlinks(root)
+        _clean_for_semgrep(root)
         found += _semgrep(root, paths, run)
         clone = tmp_path / "history"
         _clone_for_history(repo, clone, [base_sha, head_sha], run)

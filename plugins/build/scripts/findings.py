@@ -84,13 +84,22 @@ _GIT_LOCAL_ENV = (
     "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_IMPLICIT_WORK_TREE", "GIT_PREFIX",
     "GIT_NAMESPACE", "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE",
     "GIT_NO_REPLACE_OBJECTS", "GIT_INTERNAL_SUPER_PREFIX",
+    # injected or redirected configuration (could change diff output, hooks, drivers)
+    "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM",
 )
+_GIT_CONFIG_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
 
 
 def git_env(**overrides: str) -> dict:
     """The environment for git (and tools that run git): os.environ without the
-    repository-locating GIT_* variables, plus `overrides` (e.g. a temp GIT_INDEX_FILE)."""
-    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCAL_ENV}
+    repository-locating and config-injecting GIT_* variables, with system and global
+    config switched off (only the repository's own config applies), plus `overrides`
+    (e.g. a temp GIT_INDEX_FILE)."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in _GIT_LOCAL_ENV and not k.startswith(_GIT_CONFIG_PREFIXES)}
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
     env.update(overrides)
     return env
 

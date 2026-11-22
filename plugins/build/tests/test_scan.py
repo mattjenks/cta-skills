@@ -140,8 +140,8 @@ def test_fast_scan_normalizes_semgrep_and_gitleaks(tmp_path):
     assert (leak.path, leak.line, leak.message) == ("app.py", 2, "AWS access token")
     # semgrep got staged paths as argv, deletions skipped, no shell
     (sargv,) = run.argv("semgrep")
-    assert sargv[:6] == ["semgrep", "--config", "p/default", "--error", "--json", "--disable-nosem"]
-    assert sorted(sargv[6:]) == ["./app.py", "./new file.py"]
+    assert sargv[:7] == ["semgrep", "--config", "p/default", "--error", "--json", "--disable-nosem", "--no-git-ignore"]
+    assert sorted(sargv[7:]) == ["./app.py", "./new file.py"]
     (gargv,) = run.argv("gitleaks")
     assert gargv[1] == "dir" and "json" in gargv and "--redact" in gargv
     assert "-" not in gargv[gargv.index("--report-path") + 1:][:1]
@@ -230,7 +230,7 @@ def test_full_scan_uses_osv_without_npm(tmp_path):
     assert dep.path == "package-lock.json" and "left-pad" in dep.message
     # semgrep was handed only the branch diff files
     (sargv,) = run.argv("semgrep")
-    assert sorted(sargv[6:]) == ["./app.js", "./package-lock.json", "./package.json"]
+    assert sorted(sargv[7:]) == ["./app.js", "./package-lock.json", "./package.json"]
     gl_argv = run.argv("gitleaks")[0]
     assert gl_argv[1] == "git" and f"--log-opts={base}..{git(repo, 'rev-parse', 'HEAD')}" in gl_argv
     assert Path(gl_argv[-1]) != repo
@@ -313,7 +313,7 @@ def test_fast_scan_scans_staged_content_not_working_tree(tmp_path):
 
     def semgrep(argv, kw):
         root = Path(kw["cwd"])
-        for a in argv[6:]:
+        for a in argv[7:]:
             seen[a] = (root / a).read_text()
         return CLEAN
 
@@ -365,7 +365,7 @@ def test_dash_leading_file_name_is_scanned_not_an_option(tmp_path):
     run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
     scan.fast_scan(repo, run=run)
     (sargv,) = run.argv("semgrep")
-    assert sargv[6:] == ["./--exclude=*.py"]
+    assert sargv[7:] == ["./--exclude=*.py"]
 
 
 def test_non_utf8_name_never_an_uncaught_exception(tmp_path):
@@ -528,7 +528,7 @@ def test_subdirectory_repo_resolves_to_top_level(tmp_path):
     seen = {}
 
     def semgrep(argv, kw):
-        seen["args"] = sorted(argv[6:])
+        seen["args"] = sorted(argv[7:])
         return CLEAN
 
     run = audit_run(semgrep=semgrep)
@@ -539,7 +539,7 @@ def test_subdirectory_repo_resolves_to_top_level(tmp_path):
     git(repo, "add", "x.py")
     run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
     scan.fast_scan(repo / "pkg", run=run)
-    assert run.argv("semgrep")[0][6:] == ["./x.py"]
+    assert run.argv("semgrep")[0][7:] == ["./x.py"]
     from findings import diff_hash
     assert diff_hash(repo / "pkg", base) == diff_hash(repo, base)
 
@@ -588,7 +588,7 @@ def test_nested_ignore_files_removed_and_ignore_dir_is_error(tmp_path):
         seen["ignores"] = sorted(str(p.relative_to(root)) for p in root.rglob("*")
                                  if p.name in (".semgrepignore", ".gitignore") and p.is_file())
         seen["root_ignore"] = (root / ".semgrepignore").read_text()
-        seen["args"] = argv[6:]
+        seen["args"] = argv[7:]
         return CLEAN
 
     scan.fast_scan(repo, run=FakeRun({"semgrep": semgrep, "gitleaks": gl("[]")}))
@@ -617,7 +617,7 @@ def test_skipped_binary_and_symlink_are_findings(tmp_path):
     assert rules["scan.skipped-binary:img.png"].severity == "info"  # known media type
     assert rules["scan.skipped-symlink:ln.py"].severity == "info"
     assert rules["scan.skipped-binary:blob.dat"].severity == "high"  # NUL in an unknown type
-    assert run.argv("semgrep")[0][6:] == ["./ok.py"]
+    assert run.argv("semgrep")[0][7:] == ["./ok.py"]
 
 
 def test_gitleaks_uses_bundled_config_and_flags_config_changes(tmp_path):
@@ -863,7 +863,7 @@ def test_unreadable_regular_file_is_high(tmp_path, monkeypatch):
     out = scan.fast_scan(repo, run=run)
     (f,) = [f for f in out if f.path == "bad.py"]
     assert (f.rule, f.severity) == ("scan.unreadable:bad.py", "high")
-    assert run.argv("semgrep")[0][6:] == ["./ok.py"]
+    assert run.argv("semgrep")[0][7:] == ["./ok.py"]
 
 
 def test_history_clone_is_shared_and_checkout_less(tmp_path):
@@ -891,7 +891,7 @@ def test_git_environment_from_a_hook_is_ignored(tmp_path, monkeypatch):
     monkeypatch.setenv("GIT_INDEX_FILE", str(other / ".git" / "index"))
     run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
     scan.fast_scan(repo, run=run)
-    assert run.argv("semgrep")[0][6:] == ["./mine.py"]
+    assert run.argv("semgrep")[0][7:] == ["./mine.py"]
     for argv, kw in run.calls:
         env = kw.get("env")
         assert env is not None, argv
@@ -901,3 +901,63 @@ def test_git_environment_from_a_hook_is_ignored(tmp_path, monkeypatch):
     read_tree = [kw for a, kw in run.calls if "read-tree" in a]
     assert read_tree and read_tree[0]["env"]["GIT_INDEX_FILE"] != str(other / ".git" / "index")
     assert all(kw.get("env") is not None and "GIT_DIR" not in kw["env"] for _, kw in run.calls)
+
+
+# ---------------------------------------------------------------- fix round 5
+
+def test_utf16_ignore_file_is_classified_not_skipped_silently(tmp_path):
+    body = f"# key {SECRET}\n".encode("utf-16")  # NUL bytes: gitleaks regexes cannot match
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / ".gitignore").write_bytes(body)
+    (repo / "a.py").write_text("1\n")
+    git(repo, "add", "-f", ".")
+    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
+    out = scan.fast_scan(repo, run=run)
+    (f,) = [f for f in out if f.path == ".gitignore"]
+    assert (f.rule, f.severity) == ("scan.skipped-binary:.gitignore", "high")
+    assert run.argv("semgrep")[0][7:] == ["./a.py"]
+    full, _ = full_repo(tmp_path / "f", {"a.py": "1\n"})
+    (full / "d").mkdir()
+    (full / "d/.semgrepignore").write_bytes(body)
+    git(full, "add", "-f", ".")
+    git(full, "commit", "-q", "-m", "ignore")
+    out = scan.full_scan(full, "main", run=audit_run(), which=lambda n: None)
+    (f,) = [f for f in out if f.path == "d/.semgrepignore"]
+    assert (f.rule, f.severity) == ("scan.skipped-binary:d/.semgrepignore", "high")
+
+
+def test_injected_git_config_does_not_change_targets(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "a.py").write_text("1\n")
+    git(repo, "add", "a.py")
+    # config that makes every `git diff` die unless it is stripped
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "diff.algorithm")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "nonsense")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'diff.algorithm'='nonsense'")
+    bad = tmp_path / "gitconfig"
+    bad.write_text("[diff]\n\talgorithm = nonsense\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(bad))
+    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
+    scan.fast_scan(repo, run=run)
+    assert run.argv("semgrep")[0][7:] == ["./a.py"]
+
+
+def test_semgrep_ignores_an_outer_work_tree(tmp_path, monkeypatch):
+    outer = make_repo(tmp_path / "outer", {".gitignore": "*\n!.gitignore\n"})
+    (outer / "tmp").mkdir()
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "a.py").write_text("eval(x)\n")
+    git(repo, "add", "a.py")
+    monkeypatch.setattr(scan.tempfile, "tempdir", str(outer / "tmp"))
+    seen = {}
+
+    def semgrep(argv, kw):
+        root = Path(kw["cwd"])
+        seen["inside_outer"] = str(root).startswith(str(outer))
+        seen["no_git_ignore"] = "--no-git-ignore" in argv[:7]
+        seen["target"] = (root / argv[7]).read_text()
+        return CLEAN
+
+    scan.fast_scan(repo, run=FakeRun({"semgrep": semgrep, "gitleaks": gl("[]")}))
+    assert seen == {"inside_outer": True, "no_git_ignore": True, "target": "eval(x)\n"}

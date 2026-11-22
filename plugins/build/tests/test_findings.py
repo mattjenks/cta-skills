@@ -179,3 +179,34 @@ def test_diff_hash_ignores_git_environment(tmp_path, monkeypatch):
     env = findings.git_env()
     assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"} & set(env) and env.get("PATH")
     assert findings.git_env(GIT_INDEX_FILE="/x")["GIT_INDEX_FILE"] == "/x"
+
+
+def test_diff_hash_ignores_injected_git_config(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path / "r")
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "a.txt").write_text("a\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "a")
+    want = diff_hash(repo, base)
+    attrs = tmp_path / "attrs"
+    attrs.write_text("*.txt -diff\n")  # would turn the text patch into a binary one
+    plain = subprocess.run(["git", "-C", str(repo), "diff", "--binary", f"{base}..HEAD"],
+                           capture_output=True).stdout
+    changed = subprocess.run(["git", "-C", str(repo), "-c", f"core.attributesFile={attrs}",
+                              "diff", "--binary", f"{base}..HEAD"], capture_output=True).stdout
+    assert plain != changed  # sanity: the injected setting really alters diff output
+    glob_cfg = tmp_path / "gitconfig"
+    glob_cfg.write_text(f"[core]\n\tattributesFile = {attrs}\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob_cfg))
+    assert diff_hash(repo, base) == want
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL")
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.attributesFile")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(attrs))
+    assert diff_hash(repo, base) == want
+    monkeypatch.delenv("GIT_CONFIG_COUNT")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", f"'core.attributesfile'='{attrs}'")
+    assert diff_hash(repo, base) == want
+    env = findings.git_env()
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert not {"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"} & set(env)
