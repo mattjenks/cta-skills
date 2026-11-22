@@ -222,7 +222,7 @@ def test_full_scan_uses_osv_without_npm(tmp_path):
             "osv-scanner": cp(osv, 1),
         }
     )
-    out = scan.full_scan(repo, "main", run=run, which=lambda n: None)
+    out = scan.full_scan(repo, "main", run=run, which=lambda n: n != "npm")
     assert run.argv("npm") == []
     assert len(run.argv("osv-scanner")) == 1
     (dep,) = [f for f in out if f.tool == "osv-scanner"]
@@ -251,13 +251,13 @@ def test_full_scan_uses_npm_and_pip_audit(tmp_path):
             "gitleaks": gl("[]", 0),
             "npm": cp(npm, 1),
             "pip-audit": cp(pipa, 1),
+            "osv-scanner": cp('{"results": []}', 0),
         }
     )
     out = scan.full_scan(repo, "main", run=run, which=lambda n: "/bin/" + n)
     tools = {f.tool: f for f in out}
     assert tools["npm"].severity == "critical" and tools["npm"].rule == "1096"
     assert tools["pip-audit"].rule == "PYSEC-1" and tools["pip-audit"].severity == "high"
-    assert run.argv("osv-scanner") == []
     assert run.argv("npm")[0][:3] == ["npm", "audit", "--json"]
 
 
@@ -426,7 +426,8 @@ def test_npm_one_finding_per_advisory(tmp_path):
     repo, _ = full_repo(tmp_path, {"package-lock.json": "{}\n"})
     npm = json.dumps({"vulnerabilities": {"a": {"severity": "high", "via": [
         {"source": 1, "title": "t1"}, {"source": 2, "title": "t2"}, "b"]}}})
-    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]"), "npm": cp(npm, 1)})
+    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]"), "npm": cp(npm, 1),
+                   "osv-scanner": cp('{"results": []}', 0)})
     out = [f for f in scan.full_scan(repo, "main", run=run, which=lambda n: "/n")
            if f.tool == "npm"]
     assert sorted(f.rule for f in out) == ["1", "2"] and len({f.id for f in out}) == 2
@@ -436,7 +437,7 @@ def test_osv_requires_results_key(tmp_path):
     repo, _ = full_repo(tmp_path, {"go.mod": "module x\n"})
     run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]"), "osv-scanner": cp("{}", 0)})
     with pytest.raises(ScanError) as ei:
-        scan.full_scan(repo, "main", run=run, which=lambda n: None)
+        scan.full_scan(repo, "main", run=run, which=lambda n: "/b")
     assert ei.value.tool == "osv-scanner"
 
 
@@ -468,3 +469,181 @@ def test_option_like_refs_rejected(tmp_path):
     repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
     with pytest.raises(ValueError):
         scan.full_scan(repo, "--output=/tmp/x", run=FakeRun({}))
+
+
+# ---------------------------------------------------------------- fix round 2
+
+OSV_EMPTY = cp('{"results": []}', 0)
+PIP_EMPTY = cp('{"dependencies": []}', 0)
+
+
+def audit_run(**extra):
+    answers = {"semgrep": CLEAN, "gitleaks": gl("[]"), "osv-scanner": OSV_EMPTY,
+               "pip-audit": PIP_EMPTY, "npm": cp('{"vulnerabilities": {}}', 0)}
+    answers.update(extra)
+    return FakeRun(answers)
+
+
+def not_audited(out):
+    return sorted(f.path for f in out if f.rule.startswith("audit.not-audited:"))
+
+
+def test_nested_manifests_are_audited_or_reported(tmp_path):
+    repo, _ = full_repo(tmp_path, {"notes.md": "1\n"})
+    for name in ("web", "go", "requirements", "svc", "legacy"):
+        (repo / name).mkdir()
+    (repo / "web/package-lock.json").write_text("{}\n")
+    (repo / "go/go.mod").write_text("module x\n")
+    (repo / "requirements/base.txt").write_text("a==1\n")
+    (repo / "svc/pyproject.toml").write_text("[project]\n")
+    (repo / "legacy/setup.py").write_text("x=1\n")
+    (repo / "Pipfile.lock").write_text("{}\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "m")
+    run = audit_run()
+    out = scan.full_scan(repo, "main", run=run, which=lambda n: "/b")
+    assert len(run.argv("osv-scanner")) == 1 and run.argv("osv-scanner")[0][-2:] == ["-r", "."]
+    pip = run.argv("pip-audit")
+    assert pip and "requirements/base.txt" in pip[0]  # nested requirements file audited
+    assert not_audited(out) == ["legacy/setup.py", "svc/pyproject.toml"]
+    # without osv-scanner nothing osv-only is silently clean
+    out = scan.full_scan(repo, "main", run=audit_run(), which=lambda n: None if n == "osv-scanner" else "/b")
+    assert not_audited(out) == ["Pipfile.lock", "go/go.mod", "legacy/setup.py",
+                                "svc/pyproject.toml", "web/package-lock.json"]
+    assert all(f.severity == "high" for f in out if f.rule.startswith("audit."))
+
+
+def test_subdirectory_repo_resolves_to_top_level(tmp_path):
+    repo, base = full_repo(tmp_path, {"sub.py": "eval(x)\n", "requirements.txt": "a==1\n"})
+    (repo / "pkg").mkdir()
+    (repo / "pkg/inner.py").write_text("1\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "inner")
+    seen = {}
+
+    def semgrep(argv, kw):
+        seen["args"] = sorted(argv[5:])
+        return CLEAN
+
+    run = audit_run(semgrep=semgrep)
+    scan.full_scan(repo / "pkg", "main", run=run, which=lambda n: None)
+    assert "./sub.py" in seen["args"] and "./pkg/inner.py" in seen["args"]
+    assert run.argv("pip-audit")  # root manifest audited though called from a subdir
+    (repo / "x.py").write_text("1\n")
+    git(repo, "add", "x.py")
+    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
+    scan.fast_scan(repo / "pkg", run=run)
+    assert run.argv("semgrep")[0][5:] == ["./x.py"]
+    from findings import diff_hash
+    assert diff_hash(repo / "pkg", base) == diff_hash(repo, base)
+
+
+def test_gitleaks_exit_zero_without_report_is_error(tmp_path):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    for answer in (lambda argv, kw: cp("", 0), gl(""), gl("null")):
+        with pytest.raises(ScanError) as ei:
+            scan.fast_scan(repo, run=FakeRun({"gitleaks": answer}))
+        assert ei.value.tool == "gitleaks"
+
+
+def test_typechange_is_scanned(tmp_path):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "link.py").symlink_to("README.md")
+    git(repo, "add", "link.py")
+    git(repo, "commit", "-q", "-m", "link")
+    (repo / "link.py").unlink()
+    (repo / "link.py").write_text("eval(payload)\n")
+    git(repo, "add", "link.py")
+    assert "T\tlink.py" in git(repo, "diff", "--cached", "--name-status")
+    seen = {}
+
+    def semgrep(argv, kw):
+        seen["body"] = (Path(kw["cwd"]) / "link.py").read_text()
+        return CLEAN
+
+    scan.fast_scan(repo, run=FakeRun({"semgrep": semgrep, "gitleaks": gl("[]")}))
+    assert seen["body"] == "eval(payload)\n"
+
+
+def test_nested_ignore_files_removed_and_ignore_dir_is_error(tmp_path):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "d").mkdir()
+    (repo / "d/.semgrepignore").write_text("*\n")
+    (repo / "d/.gitignore").write_text("*\n")
+    (repo / ".semgrepignore").write_text("*\n")
+    (repo / "d/a.py").write_text("eval(x)\n")
+    git(repo, "add", "-f", ".")
+    seen = {}
+
+    def semgrep(argv, kw):
+        root = Path(kw["cwd"])
+        seen["ignores"] = sorted(str(p.relative_to(root)) for p in root.rglob("*")
+                                 if p.name in (".semgrepignore", ".gitignore") and p.is_file())
+        seen["root_ignore"] = (root / ".semgrepignore").read_text()
+        seen["args"] = argv[5:]
+        return CLEAN
+
+    scan.fast_scan(repo, run=FakeRun({"semgrep": semgrep, "gitleaks": gl("[]")}))
+    assert seen["ignores"] == [".semgrepignore"] and seen["root_ignore"] == ""
+    assert seen["args"] == ["./d/a.py"]
+    # a directory named .semgrepignore: fail closed
+    git(repo, "rm", "-rq", "--cached", ".")
+    (repo / ".semgrepignore").unlink()
+    (repo / ".semgrepignore").mkdir()
+    (repo / ".semgrepignore/f.py").write_text("1\n")
+    git(repo, "add", "-f", ".semgrepignore/f.py")
+    with pytest.raises(ScanError):
+        scan.fast_scan(repo, run=FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")}))
+
+
+def test_skipped_binary_and_symlink_are_findings(tmp_path):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "img.png").write_bytes(b"\x89PNG\x00\x01")
+    (repo / "ln.py").symlink_to("README.md")
+    (repo / "ok.py").write_text("1\n")
+    git(repo, "add", ".")
+    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
+    out = scan.fast_scan(repo, run=run)
+    rules = {f.rule: f for f in out}
+    assert rules["scan.skipped-binary:img.png"].severity == "high"
+    assert rules["scan.skipped-symlink:ln.py"].path == "ln.py"
+    assert run.argv("semgrep")[0][5:] == ["./ok.py"]
+
+
+def test_gitleaks_uses_bundled_config_and_flags_config_changes(tmp_path):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / ".gitleaks.toml").write_text("[allowlist]\n")
+    (repo / ".gitleaksignore").write_text("fingerprint\n")
+    git(repo, "add", ".")
+    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
+    out = scan.fast_scan(repo, run=run)
+    argv = run.argv("gitleaks")[0]
+    assert argv[argv.index("--config") + 1] == str(scan.GITLEAKS_CONFIG)
+    assert "useDefault = true" in scan.GITLEAKS_CONFIG.read_text()
+    ignore_dir = Path(argv[argv.index("--gitleaks-ignore-path") + 1])
+    assert ignore_dir != repo and "--ignore-gitleaks-allow" in argv
+    changed = sorted(f.path for f in out if f.rule == "gitleaks.config-changed")
+    assert changed == [".gitleaks.toml", ".gitleaksignore"]
+
+
+def test_null_results_is_scan_error(tmp_path):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "a.py").write_text("1\n")
+    git(repo, "add", "a.py")
+    with pytest.raises(ScanError):
+        scan.fast_scan(repo, run=FakeRun({"semgrep": cp('{"results": null}', 0),
+                                          "gitleaks": gl("[]")}))
+    full, _ = full_repo(tmp_path / "f", {"go.mod": "module x\n"})
+    with pytest.raises(ScanError) as ei:
+        scan.full_scan(full, "main", run=audit_run(**{"osv-scanner": cp('{"results": null}', 0)}),
+                       which=lambda n: "/b")
+    assert ei.value.tool == "osv-scanner"
+
+
+def test_npm_error_message_not_from_stdout(tmp_path):
+    repo, _ = full_repo(tmp_path, {"package-lock.json": "{}\n"})
+    leaked = "token=" + SECRET
+    npm = cp(json.dumps({"error": {"summary": leaked}}), 1)
+    with pytest.raises(ScanError) as ei:
+        scan.full_scan(repo, "main", run=audit_run(npm=npm), which=lambda n: "/b")
+    assert SECRET not in str(ei.value) and "exit 1" in str(ei.value)

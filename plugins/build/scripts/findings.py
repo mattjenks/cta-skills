@@ -78,10 +78,20 @@ def unresolved(record: Record) -> list[dict]:
 
 
 def check_ref(ref: str) -> str:
-    """Refuse refs that git would parse as options."""
-    if not ref or ref.startswith("-"):
+    """Refuse refs that git would parse as options (or that contain whitespace)."""
+    if not ref or ref.startswith("-") or any(c.isspace() for c in ref):
         raise ValueError(f"invalid git ref: {ref!r}")
     return ref
+
+
+def toplevel(repo: Path, run=subprocess.run) -> Path:
+    """The git top-level of `repo` (a subdirectory is resolved up, never scanned alone)."""
+    proc = run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True)
+    if proc.returncode != 0:
+        err = proc.stderr if isinstance(proc.stderr, str) else (proc.stderr or b"").decode(errors="replace")
+        raise RuntimeError(f"not a git repository: {err.strip()[-300:]}")
+    out = proc.stdout if isinstance(proc.stdout, bytes) else proc.stdout.encode()
+    return Path(os.fsdecode(out.rstrip(b"\n")))
 
 
 def diff_hash(repo: Path, base: str, head: str = "HEAD") -> str:
@@ -95,9 +105,10 @@ def diff_hash(repo: Path, base: str, head: str = "HEAD") -> str:
     """
     check_ref(base)
     check_ref(head)
+    repo = toplevel(repo)
     cmd = [
         "git", "-C", str(repo), "-c", "core.quotepath=off",
-        "-c", "diff.algorithm=myers", "diff", "-O/dev/null", "--binary", "--full-index", "--no-renames",
+        "-c", "diff.algorithm=myers", "-c", "diff.suppressBlankEmpty=false", "diff", "--no-relative", "-O/dev/null", "--binary", "--full-index", "--no-renames",
         "--no-color", "--no-ext-diff", "--no-textconv", "--no-indent-heuristic",
         "--unified=3", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/",
         f"{base}..{head}",

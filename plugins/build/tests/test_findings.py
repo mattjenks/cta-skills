@@ -142,6 +142,8 @@ def test_diff_hash_rejects_option_like_refs(tmp_path):
         diff_hash(repo, "--output=/tmp/x")
     with pytest.raises(ValueError):
         diff_hash(repo, "HEAD", "-p")
+    with pytest.raises(ValueError):
+        diff_hash(repo, "HEAD main")
 
 
 def test_diff_hash_ignores_user_diff_config(tmp_path):
@@ -156,4 +158,6 @@ def test_diff_hash_ignores_user_diff_config(tmp_path):
     git(repo, "config", "diff.renames", "copies")
     git(repo, "config", "diff.algorithm", "patience")
     git(repo, "config", "diff.indentHeuristic", "false")
+    git(repo, "config", "diff.suppressBlankEmpty", "true")
+    git(repo, "config", "diff.relative", "true")
     assert diff_hash(repo, base) == plain
