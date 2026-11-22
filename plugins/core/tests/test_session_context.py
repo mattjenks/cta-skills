@@ -55,6 +55,15 @@ def test_missing_persona_is_named(tmp_path):
     assert f"[cta] missing: {tmp_path / 'nope.md'}" in out
 
 
+def test_missing_persona_falls_back_to_bundled_default(tmp_path):
+    cfg = CtaConfig(persona=tmp_path / "nope.md")
+    out = build_context(cfg, tmp_path)
+    bundled = (SCRIPT.parent.parent / "personas" / "default.md").read_text().strip()
+    assert "===== persona: default.md =====" in out
+    assert bundled in out
+    assert f"[cta] missing: {tmp_path / 'nope.md'}" in out
+
+
 def test_cap_drops_git_then_later_files_never_first(tmp_path):
     repo = _repo(tmp_path / "repo")
     first = tmp_path / "FIRST.md"

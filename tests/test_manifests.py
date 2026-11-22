@@ -28,7 +28,22 @@ def test_plugin_versions_match():
         manifest = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text())
         assert manifest["version"] == entry["version"]
         changelog = (plugin_dir / "CHANGELOG.md").read_text()
-        assert re.search(rf"^## {re.escape(entry['version'])}\b", changelog, re.M)
+        assert _has_changelog_heading(changelog, entry["version"]), entry["version"]
+
+
+def _has_changelog_heading(changelog: str, version: str) -> bool:
+    """`## 0.4.0 — summary` (hand-written) or `## [0.6.0](url) (date)` (release-please)."""
+    v = re.escape(version)
+    return bool(re.search(rf"^## (?:\[{v}\]|{v}(?![\w.]))", changelog, re.M))
+
+
+def test_changelog_heading_shapes():
+    assert _has_changelog_heading("## 0.4.0 — notify\n", "0.4.0")
+    assert _has_changelog_heading(
+        "# Changelog\n\n## [0.6.0](https://github.com/o/r/compare/core-v0.5.0...core-v0.6.0)"
+        " (2026-12-01)\n", "0.6.0")
+    assert not _has_changelog_heading("## 0.4.10 — later\n", "0.4.1")
+    assert not _has_changelog_heading("## [0.4.10](u) (2026-12-01)\n", "0.4.1")
 
 
 def test_plugin_names_match():

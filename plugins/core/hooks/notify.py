@@ -9,8 +9,8 @@ Stop: "Done". Notification: the event's own message, truncated to 120 characters
 The title is the first `# ` heading of the configured persona file, or "CTA".
 
 Only notifies when the turn has run at least `[notify] min_turn_seconds` (default 300),
-measured from the start recorded by turn_start.py. With no recorded start, or with
-CTA_UNATTENDED=1, it stays silent. Stop clears the recorded start.
+measured from the start recorded by turn_start.py. With no recorded start, a start
+older than 24 hours (stale), or CTA_UNATTENDED=1, it stays silent. Stop clears the recorded start.
 
 Always exits 0 and never blocks. Does nothing outside macOS, and stands down when
 `stop_hook_active` is set so a Stop hook cannot notify in a loop.
@@ -79,7 +79,10 @@ def _should_notify(data: dict) -> bool:
         started = float(start_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
-    return time.time() - started >= cta_config.load_config().notify_min_seconds
+    elapsed = time.time() - started
+    if elapsed > cta_config.TURN_STALE_SECONDS:
+        return False  # stale start from a turn that never reached Stop
+    return elapsed >= cta_config.load_config().notify_min_seconds
 
 
 def _clear_start(data: dict) -> None:

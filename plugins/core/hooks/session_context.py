@@ -2,7 +2,12 @@
 # /// script
 # requires-python = ">=3.12"
 # ///
-"""SessionStart hook: inject the persona, configured context files, and git state."""
+# Adapted from coleam00/skills hooks/session_start_context.py (MIT)
+"""SessionStart hook: inject the persona, configured context files, and git state.
+
+A configured persona file that is missing is reported with `[cta] missing: <path>` and
+the bundled default persona is injected in its place.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 CAP = 9500
+DEFAULT_PERSONA = Path(__file__).resolve().parent.parent / "personas" / "default.md"
 OPEN, CLOSE = "<cta-context>", "</cta-context>"
 
 
@@ -67,7 +73,12 @@ def build_context(cfg, cwd: Path, cap: int = CAP) -> str:
         text = _read(path)
         if text is None:
             fixed.append(f"[cta] missing: {path}")
-            continue
+            if not is_persona or path == DEFAULT_PERSONA:
+                continue
+            text = _read(DEFAULT_PERSONA)
+            if text is None:
+                continue
+            path = DEFAULT_PERSONA
         head = f"===== persona: {path.name} =====" if is_persona else f"===== {path.name} ====="
         # the persona and the first context file are never dropped
         protected = is_persona or first_ctx
@@ -103,8 +114,7 @@ def _emit(text: str) -> None:
 
 
 def _fallback(note: str) -> str:
-    persona = Path(__file__).resolve().parent.parent / "personas" / "default.md"
-    body = _read(persona) or ""
+    body = _read(DEFAULT_PERSONA) or ""
     return f"{OPEN}\n===== persona: default.md =====\n{body.rstrip()}\n[cta] note: {note}\n{CLOSE}"
 
 

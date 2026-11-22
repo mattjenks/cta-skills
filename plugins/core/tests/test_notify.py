@@ -210,3 +210,18 @@ def test_stop_removes_start_file_even_when_silent(cta_env, monkeypatch, tmp_path
     _main_with(monkeypatch, {"hook_event_name": "Stop"})
     run.assert_not_called()
     assert not path.exists()
+
+
+def test_start_older_than_24h_is_stale(cta_env, monkeypatch, tmp_path):
+    run, _ = cta_env
+    path = _started(tmp_path, 24 * 3600 + 1)
+    _main_with(monkeypatch, {"hook_event_name": "Stop"})
+    run.assert_not_called()
+    assert not path.exists()
+
+
+def test_start_just_under_24h_notifies(cta_env, monkeypatch, tmp_path):
+    run, _ = cta_env
+    _started(tmp_path, 24 * 3600 - 1)
+    _main_with(monkeypatch, {"hook_event_name": "Stop"})
+    run.assert_called_once()

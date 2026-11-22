@@ -1,5 +1,7 @@
 import io
 import json
+import os
+import time
 
 import pytest
 
@@ -43,3 +45,32 @@ def test_overwrites_previous_start(state, monkeypatch):
         _run(monkeypatch, {"session_id": "s1"})
     assert float((state / "turns" / "s1").read_text()) == 200.0
     assert [p.name for p in (state / "turns").iterdir()] == ["s1"]
+
+
+def _aged(path, age_seconds, now):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("1.0", encoding="utf-8")
+    ts = now - age_seconds
+    os.utime(path, (ts, ts))
+    return path
+
+
+def test_prunes_turn_files_older_than_24h(state, monkeypatch):
+    now = time.time()
+    turns = state / "turns"
+    old = _aged(turns / "old", 25 * 3600, now)
+    fresh = _aged(turns / "fresh", 3600, now)
+    _run(monkeypatch, {"session_id": "s1"})
+    assert not old.exists()
+    assert fresh.exists()
+    assert (turns / "s1").exists()
+
+
+def test_prune_is_bounded(state, monkeypatch):
+    now = time.time()
+    turns = state / "turns"
+    for i in range(turn_start.PRUNE_LIMIT + 50):
+        _aged(turns / f"old{i}", 25 * 3600, now)
+    _run(monkeypatch, {"session_id": "s1"})
+    left = [p for p in turns.iterdir() if p.name != "s1"]
+    assert len(left) >= 50  # at most PRUNE_LIMIT entries were examined

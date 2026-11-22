@@ -230,9 +230,15 @@ def _bash_reason(variant: str) -> str | None:
     return None
 
 
+def _unify_newlines(text: str) -> str:
+    """CRLF and lone CR become LF, so `$` and line scans see Windows and old-Mac files."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def _inspect_content(text: str, deadline: float) -> str | None:
     if not isinstance(text, str) or not text:
         return None
+    text = _unify_newlines(text)
     for dump in _DUMP_CHECKS:
         if time.monotonic() > deadline:
             return BLOCKED_COMPLEX
@@ -301,7 +307,7 @@ def _check(tool_name: str, tool_input: dict, deadline: float) -> str | None:
         command = str(tool_input.get("command") or "")
         if len(command) > MAX_COMMAND or command.count("$(") + command.count("`") > MAX_OPENERS:
             return BLOCKED_COMPLEX
-        bases = _bases(command)
+        bases = _bases(_unify_newlines(command))
         # Unexpanded forms first, then substitution bodies, smallest first.
         for base in bases:
             for variant in (base, _normalize(base)):

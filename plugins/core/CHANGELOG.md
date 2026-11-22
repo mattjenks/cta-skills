@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 — telemetry backup config and fixes
+
+- New `[telemetry] backup_dir` config key: the folder the nightly telemetry backup copies to.
+- A configured persona file that is missing now falls back to the bundled default persona, still reported as `[cta] missing: <path>`.
+- Secrets guard: CRLF and lone-CR line endings are normalized before scanning, so secret-file reads and whole-environment dumps in Windows-style files are caught.
+- `turn_start.py` prunes turn records older than 24 hours (at most 200 checked per run); `notify.py` treats a start older than 24 hours as stale and stays silent.
+- Telemetry backup: prints config problems to stderr, keeps only the newest 7 live snapshots (rotated copies are never pruned), and raises a macOS notification on any failure.
+
 ## 0.4.0 — notify only for long turns
 
 - New `turn_start.py` (UserPromptSubmit) records when each turn starts; it prints nothing and fails open.
@@ -14,7 +22,7 @@
 ## 0.2.0 — hooks: session context, secrets guard, notify
 
 - Config loader (`cta_config.py`) reads `~/.config/cta/config.toml` and falls back to defaults.
-- Session-context hook injects the persona and configured context files, plus the neutral default persona.
+- Session-context hook injects the persona and configured context files, and falls back to the neutral default persona.
 - Secrets guard blocks reads and writes of secret files and credential-bearing commands (exit 2).
 - Notify hook raises a desktop notification on Stop and Notification, titled with the persona name.
 - Hook wiring: `hooks/hooks.json` runs each hook through `uv run --script`.

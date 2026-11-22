@@ -11,6 +11,7 @@ from pathlib import Path
 DEFAULT_CONFIG_PATH = Path.home() / ".config/cta/config.toml"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_NOTIFY_MIN_SECONDS = 300
+TURN_STALE_SECONDS = 24 * 3600  # a recorded turn start older than this is ignored and pruned
 _SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 
