@@ -68,6 +68,7 @@ ROWS = [
         {"new_string": "print(dict(os.environ))"}]}, True),
     ("Write", {"file_path": "x.py", "content": "print(os.environ.copy())"}, True),
     ("Write", {"file_path": "x.py", "content": "requests.post(u, json=os.environ.copy())"}, True),
+    ("Write", {"file_path": "x.sh", "content": "echo hi; cat server.pem\nx=1"}, True),
     ("Bash", {"command": "cat .\\env"}, True),
     ("Bash", {"command": "cat .e\\nv"}, True),
     # --- allow ---
@@ -187,3 +188,98 @@ def test_deadline_fails_closed(monkeypatch):
     ticks = iter(range(0, 1000, 5))
     monkeypatch.setattr(secrets_guard.time, "monotonic", lambda: next(ticks))
     assert check("Bash", {"command": "ls -la"}) == secrets_guard.BLOCKED_COMPLEX
+
+
+# --- fix round 4: linear content checks, no padding bypass ---
+
+def _timed_check(tool, tool_input):
+    import time
+    start = time.monotonic()
+    result = check(tool, tool_input)
+    assert time.monotonic() - start < 1
+    return result
+
+
+def test_write_million_newlines_then_dump_blocks():
+    content = "\n" * 1_000_000 + "print(os.environ)"
+    assert _timed_check("Write", {"file_path": "x.py", "content": content}) is not None
+
+
+def test_edit_300k_newlines_then_dump_blocks():
+    new = "\n" * 300_000 + "print(os.environ)"
+    assert _timed_check("Edit", {"file_path": "x.py", "new_string": new}) is not None
+
+
+def test_oversized_write_blocks_as_too_complex():
+    import secrets_guard
+    content = "a" * 3_000_000
+    result = _timed_check("Write", {"file_path": "x.py", "content": content})
+    assert result == secrets_guard.BLOCKED_COMPLEX
+
+
+def test_multiedit_total_size_is_capped():
+    import secrets_guard
+    edits = [{"new_string": "a" * 600_000} for _ in range(4)]
+    result = _timed_check("MultiEdit", {"file_path": "x.py", "edits": edits})
+    assert result == secrets_guard.BLOCKED_COMPLEX
+
+
+def test_newlines_inside_nested_substitutions_return_verdict():
+    cmd = "$($(" + "\n" * 19_990 + "))"
+    assert len(cmd) <= 20_000
+    _timed_check("Bash", {"command": cmd})
+
+
+def test_long_rm_flag_token_returns_verdict():
+    _timed_check("Bash", {"command": "rm -" + "r" * 19_900 + "1 x"})
+
+
+@pytest.mark.parametrize("tool,tool_input", [
+    ("Bash", {"command": "echo " + "a" * 210 + " $OPENAI_API_KEY"}),
+    ("Bash", {"command": "python -c 'print(\"" + "a" * 510 + "\", os.environ)'"}),
+    ("Write", {"file_path": "x.py", "content": "print('" + "a" * 510 + "', os.environ)"}),
+    ("Write", {"file_path": "x.js", "content": "console.log('" + "a" * 510 + "', process.env)"}),
+])
+def test_padding_does_not_bypass(tool, tool_input):
+    assert _timed_check(tool, tool_input) is not None
+
+
+@pytest.mark.parametrize("tool,tool_input", [
+    ("Bash", {"command": "echo " + "a" * 5000 + "; deploy --token $DEPLOY_TOKEN"}),
+    ("Write", {"file_path": "x.sh", "content": "echo hi\ncurl -H \"X: $API_TOKEN\" u"}),
+    ("Write", {"file_path": "x.py", "content": "print('" + "a" * 510 + "')\nx = os.environ"}),
+    ("Write", {"file_path": "x.py", "content": "print(f(" + "a" * 510 + "), os.environ.get('HOME'))"}),
+])
+def test_padding_rules_stay_scoped(tool, tool_input):
+    # echo and a secret reference on different lines, an output call closed
+    # before the environment is named, and single-variable reads are allowed.
+    # The first row is still blocked: echo and the reference share a line.
+    expected = tool_input.get("command", "").startswith("echo " + "a")
+    assert (_timed_check(tool, tool_input) is not None) == expected
+
+
+def test_short_dangerous_body_checked_first(monkeypatch):
+    # Long harmless bodies come first in the command; only the short ruby body
+    # is dangerous, and only once expanded. The clock allows the deadline read,
+    # the four unexpanded variants and the first body's two forms, so the
+    # verdict is BLOCKED_ENV only if the shortest body is checked first.
+    import secrets_guard
+    filler = "".join(f"echo $(echo {c * 4000}); " for c in "abc")
+    cmd = filler + "ruby -e \"$(echo 'puts ENV')\""
+    total = sum(2 * len(t) for b in secrets_guard._bases(cmd)
+                for t in set(secrets_guard._substitutions(b)))
+    assert total <= secrets_guard.MAX_INSPECTED
+    for base in secrets_guard._bases(cmd):  # not caught unexpanded
+        assert secrets_guard._bash_reason(base) is None
+        assert secrets_guard._bash_reason(secrets_guard._normalize(base)) is None
+    calls = iter([0] * 7 + [100] * 1000)
+    monkeypatch.setattr(secrets_guard.time, "monotonic", lambda: next(calls))
+    assert check("Bash", {"command": cmd}) == secrets_guard.BLOCKED_ENV
+
+
+def test_content_deadline_fails_closed(monkeypatch):
+    import secrets_guard
+    ticks = iter(range(0, 1000, 5))
+    monkeypatch.setattr(secrets_guard.time, "monotonic", lambda: next(ticks))
+    result = check("Write", {"file_path": "x.py", "content": "a = 1"})
+    assert result == secrets_guard.BLOCKED_COMPLEX

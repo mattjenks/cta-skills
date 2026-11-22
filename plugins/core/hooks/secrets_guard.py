@@ -21,7 +21,8 @@ runtime from character codes; a secret read and its output split across
 lines (content inspection is per line for file reads); globs (`cat .en*`);
 indirect reads (`grep -r KEY .`); multi-argument or multi-line environment
 dumps in file content; Bash commands over 20,000 characters (e.g. large
-heredoc writes) are blocked as too complex; Bash tokens that merely
+heredoc writes) and file content over 2,000,000 characters are blocked
+as too complex; Bash tokens that merely
 mention a secret-looking name (e.g. grep for access_code) are blocked.
 """
 
@@ -40,6 +41,8 @@ SECRET_PATH = re.compile(
     r"|credentials\.json|access[_-]code|\.config/cta/secrets",
     re.IGNORECASE,
 )
+# Same pattern for multi-line content: `$` must also match at each line end.
+_SECRET_LINE = re.compile(SECRET_PATH.pattern, re.IGNORECASE | re.MULTILINE)
 
 # Shell-builtin name assembled from fragments so this file does not trip other
 # guards (or this one) when it is written or edited.
@@ -47,17 +50,64 @@ _PRINT_ENV = "print" + "env"
 
 # Whole-environment dumps and exfiltration, in code or in an inline command.
 # Single reads (os.environ.get, os.environ["X"], process.env.X) are fine.
-_OUTPUT = r"(?:print|pprint|dumps?|write|writelines|echo|log\w*|post|put|send\w*|stringify)"
+# Every pattern is linear: a whitespace run that must not cross a line uses
+# [ \t], never \s, and no pattern carries an unbounded gap between two parts.
 ENV_DUMP = (
     re.compile(r"\b" + _PRINT_ENV + r"\b", re.IGNORECASE),
-    re.compile(r"\becho\b.{0,200}\$\{?[A-Z_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)"),
-    re.compile(r"^\s*env\s*[|>]", re.MULTILINE),  # shell script line: `env | ...`
+    re.compile(r"^[ \t]*env[ \t]*[|>]", re.MULTILINE),  # shell script line: `env | ...`
     re.compile(r"/proc/(?:self|\d+)/environ"),
-    re.compile(r"\bexport\s+-p\b|\bdeclare\s+-x\b|\bcompgen\s+-e\b"),
-    re.compile(r"\b" + _OUTPUT + r"\s*\([^)\n]{0,500}\bos\.environ\b(?!\s*(?:\.get\b|\[|\.pop\b|\.setdefault\b|\.update\b))"),
-    re.compile(r"\b" + _OUTPUT + r"\s*\([^)\n]{0,500}\bprocess\.env\b(?!\s*[.\[])", re.IGNORECASE),
-    re.compile(r"\bENV\.to_h\b|\bENV\.to_a\b|\bputs\s+ENV\s*$", re.MULTILINE),
+    re.compile(r"\bexport[ \t]+-p\b|\bdeclare[ \t]+-x\b|\bcompgen[ \t]+-e\b"),
+    re.compile(r"\bENV\.to_h\b|\bENV\.to_a\b|\bputs[ \t]+ENV[ \t]*$", re.MULTILINE),
 )
+
+# Output and secret are matched up by one token scan per rule instead of a
+# regex with a gap between them, so padding cannot push them apart.
+_OUTPUT = r"(?:print|pprint|dumps?|write|writelines|echo|log\w*|post|put|send\w*|stringify)"
+_SECRET_VAR = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API")
+
+# `echo` then `$..KEY` (or TOKEN, SECRET...) later on the same line.
+_ECHO_SCAN = re.compile(r"(\becho\b)|\$\{?([A-Z_]+)|(\n)")
+
+# An output call `name(` then the whole environment before any `)` or line
+# break: `print(dict(os.environ))`, `console.log('x', process.env)`.
+_CALL_SCAN = (
+    re.compile(
+        r"(\b" + _OUTPUT + r"\s*\()|([)\n])"
+        r"|(\bos\.environ\b(?!\s*(?:\.get\b|\[|\.pop\b|\.setdefault\b|\.update\b)))"
+    ),
+    re.compile(
+        r"(\b" + _OUTPUT + r"\s*\()|([)\n])|(\bprocess\.env\b(?!\s*[.\[]))",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _echo_secret(text: str) -> bool:
+    echo = False
+    for m in _ECHO_SCAN.finditer(text):
+        if m.group(1):
+            echo = True
+        elif m.group(3):
+            echo = False
+        elif echo and any(w in m.group(2) for w in _SECRET_VAR):
+            return True
+    return False
+
+
+def _output_env(text: str) -> bool:
+    for scan in _CALL_SCAN:
+        open_call = False
+        for m in scan.finditer(text):
+            if m.group(1):
+                open_call = True
+            elif m.group(2):
+                open_call = False
+            elif open_call:
+                return True
+    return False
+
+
+_DUMP_CHECKS = (*(p.search for p in ENV_DUMP), _echo_secret, _output_env)
 
 # Reading a secret file and sending it to stdout or the network on one line.
 _READ = re.compile(r"\bopen\s*\(|readFile|read_text|read_bytes|\bcat\b|\bsource\b|<\s*\S", re.IGNORECASE)
@@ -69,7 +119,7 @@ _SINK = re.compile(
 
 # Bare `env` (maybe piped or redirected). Shell commands only: in file content
 # `env` is an ordinary identifier.
-BARE_ENV = re.compile(r"(?:^|[;&|(`])\s*env\s*(?:$|[|>;&)`])", re.MULTILINE)
+BARE_ENV = re.compile(r"(?:^|[;&|(`])[ \t]*env[ \t]*(?:$|[|>;&)`])", re.MULTILINE)
 
 BLOCKED_SECRET = (
     "BLOCKED: access to secrets is not allowed.\n"
@@ -83,6 +133,7 @@ BLOCKED_COMPLEX = "BLOCKED: command too complex for the secrets guard to inspect
 MAX_COMMAND = 20_000
 MAX_OPENERS = 256
 MAX_INSPECTED = 200_000
+MAX_CONTENT = 2_000_000  # total characters across one call's file content
 DEADLINE_SECONDS = 2.0
 BLOCKED_RM = "BLOCKED: refusing to run a recursive-force delete (rm -rf)."
 
@@ -146,11 +197,13 @@ def _command_names_secret(command: str) -> bool:
 
 
 def _env_dump(text: str) -> bool:
-    return any(p.search(text) for p in ENV_DUMP)
+    return any(c(text) for c in _DUMP_CHECKS)
 
 
-_REC = re.compile(r"-[a-zA-Z]*[rR][a-zA-Z]*")
-_FORCE = re.compile(r"-[a-zA-Z]*f[a-zA-Z]*")
+def _short_flags(tok: str) -> str:
+    """Letters of a short-option cluster such as `-rf`, else ""."""
+    body = tok[1:]
+    return body if body.isascii() and body.isalpha() else ""
 
 
 def _is_dangerous_rm(command: str) -> bool:
@@ -159,8 +212,9 @@ def _is_dangerous_rm(command: str) -> bool:
         rec = force = False
         for tok in reversed(seg.split()):  # suffix flags, so no per-rm slicing
             if tok.startswith("-"):
-                rec = rec or tok == "--recursive" or bool(_REC.fullmatch(tok))
-                force = force or tok == "--force" or bool(_FORCE.fullmatch(tok))
+                flags = _short_flags(tok)
+                rec = rec or tok == "--recursive" or "r" in flags or "R" in flags
+                force = force or tok == "--force" or "f" in flags
             elif rec and force and PurePosixPath(tok).name == "rm":
                 return True
     return False
@@ -176,14 +230,28 @@ def _bash_reason(variant: str) -> str | None:
     return None
 
 
-def _inspect_content(text: str) -> str | None:
+def _inspect_content(text: str, deadline: float) -> str | None:
     if not isinstance(text, str) or not text:
         return None
-    if _env_dump(text):
-        return BLOCKED_ENV
-    for line in text.splitlines():
-        if _is_secret_path(line) and _READ.search(line) and _SINK.search(line):
+    for dump in _DUMP_CHECKS:
+        if time.monotonic() > deadline:
+            return BLOCKED_COMPLEX
+        if dump(text):
             return BLOCKED_ENV
+    # Only lines naming a secret path need the read and sink checks. Template
+    # removal and slash folding never touch a newline, so lines line up.
+    folded = _TEMPLATE.sub("", text.replace("\\", "/"))
+    pos = 0
+    while (m := _SECRET_LINE.search(folded, pos)) is not None:
+        if time.monotonic() > deadline:
+            return BLOCKED_COMPLEX
+        start = folded.rfind("\n", 0, m.start()) + 1
+        end = folded.find("\n", m.end())
+        end = len(folded) if end < 0 else end
+        line = folded[start:end]
+        if _READ.search(line) and _SINK.search(line):
+            return BLOCKED_ENV
+        pos = end + 1
     return None
 
 
@@ -214,8 +282,11 @@ def _check(tool_name: str, tool_input: dict, deadline: float) -> str | None:
         for key in ("file_path", "notebook_path", "path"):
             if _is_secret_path(str(tool_input.get(key) or "")):
                 return BLOCKED_SECRET
-        for text in _contents(tool_name, tool_input):
-            reason = _inspect_content(text)
+        texts = [t for t in _contents(tool_name, tool_input) if isinstance(t, str)]
+        if sum(len(t) for t in texts) > MAX_CONTENT:
+            return BLOCKED_COMPLEX
+        for text in texts:
+            reason = _inspect_content(text, deadline)
             if reason:
                 return reason
         return None
