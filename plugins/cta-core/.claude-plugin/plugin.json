@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "cta-core",
+  "displayName": "CTA Core",
+  "version": "0.1.0",
+  "description": "Chief Technology Assistant: a prescriptive, Claude Code-specific system of skills and hooks for the plan, build, deploy, monitor, learn loop.",
+  "author": {
+    "name": "Matt Jenks",
+    "url": "https://github.com/mattjenks"
+  },
+  "homepage": "https://github.com/mattjenks/cta-skills",
+  "repository": "https://github.com/mattjenks/cta-skills",
+  "license": "MIT",
+  "keywords": ["skills", "hooks", "persona", "workflow", "claude-code"]
+}

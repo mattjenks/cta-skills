@@ -1,0 +1,9 @@
+# Dev-only: pytest configuration. No runtime dependencies.
+[project]
+name = "cta-skills-dev"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "plugins/cta-core/tests", "telemetry/tests"]

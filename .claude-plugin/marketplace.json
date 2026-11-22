@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "cta",
+  "description": "Chief Technology Assistant: a prescriptive, Claude Code-specific system of skills and hooks for the plan, build, deploy, monitor, learn loop.",
+  "owner": {
+    "name": "Matt Jenks",
+    "url": "https://github.com/mattjenks"
+  },
+  "plugins": [
+    {
+      "name": "cta-core",
+      "version": "0.1.0",
+      "displayName": "CTA Core",
+      "source": "./plugins/cta-core",
+      "description": "Chief Technology Assistant: a prescriptive, Claude Code-specific system of skills and hooks for the plan, build, deploy, monitor, learn loop.",
+      "author": {
+        "name": "Matt Jenks",
+        "url": "https://github.com/mattjenks"
+      },
+      "homepage": "https://github.com/mattjenks/cta-skills",
+      "repository": "https://github.com/mattjenks/cta-skills",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["skills", "hooks", "persona", "workflow", "claude-code"]
+    }
+  ]
+}
