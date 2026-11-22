@@ -134,3 +134,26 @@ def test_save_is_atomic(tmp_path, monkeypatch):
     monkeypatch.undo()
     assert json.loads(path.read_text()) == old  # original untouched
     assert [p.name for p in tmp_path.iterdir()] == ["security.json"]  # no temp left
+
+
+def test_diff_hash_rejects_option_like_refs(tmp_path):
+    repo = make_repo(tmp_path / "r")
+    with pytest.raises(ValueError):
+        diff_hash(repo, "--output=/tmp/x")
+    with pytest.raises(ValueError):
+        diff_hash(repo, "HEAD", "-p")
+
+
+def test_diff_hash_ignores_user_diff_config(tmp_path):
+    repo = make_repo(tmp_path / "r")
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "old.txt").write_text("".join(f"line {i}\n" for i in range(30)))
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "a")
+    git(repo, "mv", "old.txt", "new.txt")
+    git(repo, "commit", "-q", "-m", "rename")
+    plain = diff_hash(repo, base)
+    git(repo, "config", "diff.renames", "copies")
+    git(repo, "config", "diff.algorithm", "patience")
+    git(repo, "config", "diff.indentHeuristic", "false")
+    assert diff_hash(repo, base) == plain

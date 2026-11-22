@@ -77,26 +77,42 @@ def unresolved(record: Record) -> list[dict]:
     return [f for f in record["findings"] if f.get("status") in ("open", "proposed-false-positive")]
 
 
+def check_ref(ref: str) -> str:
+    """Refuse refs that git would parse as options."""
+    if not ref or ref.startswith("-"):
+        raise ValueError(f"invalid git ref: {ref!r}")
+    return ref
+
+
 def diff_hash(repo: Path, base: str, head: str = "HEAD") -> str:
     """SHA-256 of `git diff --binary --full-index base..head`.
 
-    Only committed history is hashed (never the working tree); blob ids make
-    binary files stable, and the output is streamed so large diffs stay cheap.
+    Only committed history is hashed (never the working tree). Blob ids make
+    binary files stable. Renames, ordering, algorithm, context and the indent
+    heuristic are pinned on the command line so user git config cannot change
+    the hash. Stdout is streamed (large diffs stay cheap); stderr goes to a temp
+    file so a chatty git cannot deadlock the pipe.
     """
+    check_ref(base)
+    check_ref(head)
     cmd = [
-        "git", "-C", str(repo), "-c", "core.quotepath=off", "diff",
-        "--binary", "--full-index", "--no-color", "--no-ext-diff", "--no-textconv",
-        "--src-prefix=a/", "--dst-prefix=b/", f"{base}..{head}",
+        "git", "-C", str(repo), "-c", "core.quotepath=off",
+        "-c", "diff.algorithm=myers", "diff", "-O/dev/null", "--binary", "--full-index", "--no-renames",
+        "--no-color", "--no-ext-diff", "--no-textconv", "--no-indent-heuristic",
+        "--unified=3", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/",
+        f"{base}..{head}",
     ]
     digest = hashlib.sha256()
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
-        assert proc.stdout is not None
-        for chunk in iter(lambda: proc.stdout.read(1 << 20), b""):
-            digest.update(chunk)
-        err = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
-        rc = proc.wait()
-    if rc != 0:
-        raise RuntimeError(f"git diff {base}..{head} failed: {err.strip()[-500:]}")
+    with tempfile.TemporaryFile() as err:
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err) as proc:
+            assert proc.stdout is not None
+            for chunk in iter(lambda: proc.stdout.read(1 << 20), b""):
+                digest.update(chunk)
+            rc = proc.wait()
+        if rc != 0:
+            err.seek(0)
+            tail = err.read().decode(errors="replace").strip()[-500:]
+            raise RuntimeError(f"git diff {base}..{head} failed: {tail}")
     return digest.hexdigest()
 
 
