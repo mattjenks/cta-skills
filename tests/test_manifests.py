@@ -30,6 +30,15 @@ def test_plugin_versions_match():
         assert re.search(rf"^## {re.escape(entry['version'])}\b", changelog, re.M)
 
 
+def test_plugin_names_match():
+    for entry in _marketplace()["plugins"]:
+        plugin_dir = ROOT / entry["source"]
+        manifest = json.loads((plugin_dir / ".claude-plugin" / "plugin.json").read_text())
+        assert manifest["name"] == entry["name"], (manifest["name"], entry["name"])
+        assert plugin_dir.name == entry["name"], (plugin_dir.name, entry["name"])
+        assert not entry["name"].startswith("cta-"), entry["name"]
+
+
 def _candidate_files():
     out = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard"],

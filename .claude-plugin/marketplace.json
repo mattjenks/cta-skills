@@ -8,10 +8,10 @@
   },
   "plugins": [
     {
-      "name": "cta-core",
+      "name": "core",
       "version": "0.1.0",
       "displayName": "CTA Core",
-      "source": "./plugins/cta-core",
+      "source": "./plugins/core",
       "description": "Chief Technology Assistant: a prescriptive, Claude Code-specific system of skills and hooks for the plan, build, deploy, monitor, learn loop.",
       "author": {
         "name": "Matt Jenks",

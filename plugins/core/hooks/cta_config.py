@@ -1,4 +1,4 @@
-"""Config loader for cta-core hooks. Never raises: problems are reported in `notes`."""
+"""Config loader for core hooks. Never raises: problems are reported in `notes`."""
 
 from __future__ import annotations
 

@@ -6,4 +6,4 @@ requires-python = ">=3.12"
 dependencies = []
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "plugins/cta-core/tests", "telemetry/tests"]
+testpaths = ["tests", "plugins/core/tests", "telemetry/tests"]

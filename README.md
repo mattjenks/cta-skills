@@ -10,10 +10,10 @@ The assistant's voice is a swappable persona. The bundled one is `default` ("CTA
 
 ```text
 /plugin marketplace add mattjenks/cta-skills
-/plugin install cta-core@cta
+/plugin install core@cta
 ```
 
-Skills are invoked as `/cta-core:<skill>`.
+Skills are invoked as `/core:<skill>`.
 
 ## Configuration
 
