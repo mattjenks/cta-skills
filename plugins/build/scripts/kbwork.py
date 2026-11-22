@@ -5,7 +5,9 @@
 """Knowledge-base worktrees, project mapping and the active-build pointer.
 
 The build loop writes its documents into a git worktree of the user's knowledge
-base, on its own branch, so the live checkout is never touched. Stdlib only.
+base, on its own branch, so the live checkout is never touched. Writing the
+active-build pointer also installs the commit gate (gitgate.install_gate); clearing
+it removes the gate unless the repo tracks `.cta/security.toml`. Stdlib only.
 
 CLI (prints JSON):
   kbwork.py open --kb PATH --slug S --topic T [--projects-dir D] [--date YYYY-MM-DD]
@@ -355,6 +357,9 @@ def write_pointer(repo: Path, build: Build) -> Path:
         + "\n"
     )
     exclude_path(repo, ".cta/active-build")
+    import gitgate  # here, not at the top: gitgate imports this module
+
+    gitgate.install_gate(repo)
     return pointer
 
 
@@ -376,7 +381,16 @@ def read_pointer(repo: Path) -> Build | None:
 
 
 def clear_pointer(repo: Path) -> None:
+    """Remove the pointer and the commit gate, unless the repo opted in to a permanent gate
+    with a tracked `.cta/security.toml`."""
     (Path(repo) / POINTER).unlink(missing_ok=True)
+    import gitgate
+
+    if not gitgate.opted_in(repo):
+        try:
+            gitgate.uninstall_gate(repo)
+        except gitgate.GateError as exc:  # the gate stays on: the safe side
+            print(f"warning: commit gate not removed from {repo}: {exc}", file=sys.stderr)
 
 
 # --- CLI ---------------------------------------------------------------------

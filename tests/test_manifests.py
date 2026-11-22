@@ -199,7 +199,7 @@ def _build_command(script):
 def test_build_hooks_json_commands_exist_and_run_through_uv():
     entries = list(_build_hook_entries())
     assert {e for e, _, _ in entries} == {"PreToolUse"}
-    assert {Path(h["command"]).name.rstrip('"') for _, _, h in entries} == {"security_gate.py", "finding_guard.py"}
+    assert {Path(h["command"]).name.rstrip('"') for _, _, h in entries} == {"gate_guard.py", "finding_guard.py"}
     for _, _, hook in entries:
         assert hook["command"].startswith("uv run --script "), hook["command"]
         match = re.search(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"', hook["command"])
@@ -212,7 +212,7 @@ def test_build_hooks_json_commands_exist_and_run_through_uv():
 def test_build_hook_matchers_and_timeouts():
     by_script = {Path(h["command"]).name.rstrip('"'): (g["matcher"], h["timeout"])
                  for _, g, h in _build_hook_entries()}
-    assert by_script["security_gate.py"] == ("Bash", 120)
+    assert by_script["gate_guard.py"] == ("Bash|Write|Edit|MultiEdit", 15)
     assert by_script["finding_guard.py"] == ("Write|Edit|MultiEdit|Bash", 15)
 
 
@@ -232,17 +232,9 @@ def test_wired_finding_guard_blocks_and_allows():
     assert allowed.returncode == 0, allowed.stderr
 
 
-def test_wired_security_gate_allows_non_commit_and_blocks_missing_scanners(tmp_path):
-    import shutil
-
-    command = _build_command("security_gate.py")
-    # PATH with only uv and git: no scanner can be found, whatever the machine has installed
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    for tool in ("uv", "git"):
-        (bin_dir / tool).symlink_to(shutil.which(tool))
-    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin"}
-    env.pop("GIT_DIR", None)
+def test_wired_gate_guard_refuses_hook_bypass_in_gated_repo(tmp_path):
+    command = _build_command("gate_guard.py")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
     def run(cmd, cwd):
         return subprocess.run(
@@ -250,17 +242,20 @@ def test_wired_security_gate_allows_non_commit_and_blocks_missing_scanners(tmp_p
             input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}),
         )
 
-    assert run("ls", tmp_path).returncode == 0
     repo = tmp_path / "repo"
     repo.mkdir()
-    git_env = {**env, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    for args in (["init", "-q"], ["config", "user.name", "Ada"], ["config", "user.email", "ada@example.invalid"]):
-        subprocess.run(["git", "-C", str(repo), *args], check=True, env=git_env)
-    (repo / "a.py").write_text("x = 1\n")
-    subprocess.run(["git", "-C", str(repo), "add", "a.py"], check=True, env=git_env)
-    assert run("git commit -m x", repo).returncode == 0  # not gated: no run, no security.toml
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+    assert run("git commit --no-verify -m x", repo).returncode == 0  # not gated
     (repo / ".cta").mkdir()
     (repo / ".cta" / "active-build").write_text("{}")
-    blocked = run("git commit -m x", repo)
+    blocked = run("git commit --no-verify -m x", repo)
     assert blocked.returncode == 2, blocked.stderr
-    assert "install semgrep, gitleaks" in blocked.stderr
+    assert "--no-verify" in blocked.stderr
+    assert run("git commit -m x", repo).returncode == 0
+
+
+def test_build_git_hooks_are_executable_uv_scripts():
+    for name in ("pre-commit", "pre-merge-commit", "pre-applypatch"):
+        path = BUILD_DIR / "hooks" / "git" / name
+        assert path.is_file() and os.access(path, os.X_OK), path
+        assert path.read_text().startswith("#!/usr/bin/env -S uv run --script\n"), path

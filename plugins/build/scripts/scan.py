@@ -51,7 +51,8 @@ other non-regular entries (submodule gitlinks) are `info` `scan.skipped-other:<p
 are removed from what semgrep sees, but gitleaks scans their content under a renamed
 name it cannot honour. A regular file that cannot be read is `high` `scan.unreadable:<path>`.
 All git (and gitleaks) subprocesses run without inherited GIT_DIR/GIT_WORK_TREE/
-GIT_INDEX_FILE etc.; only full_scan's temporary index sets GIT_INDEX_FILE. git config
+GIT_INDEX_FILE etc.; only full_scan's temporary index and fast_scan's explicit
+`index_file` (a git hook's GIT_INDEX_FILE) set GIT_INDEX_FILE. git config
 from GIT_CONFIG_* variables, -c parameters, and global/system files is not used
 either (GIT_CONFIG_NOSYSTEM=1, GIT_CONFIG_GLOBAL=/dev/null). Ignore files are
 classified (binary/symlink/unreadable) like any other file before they are renamed or
@@ -445,22 +446,27 @@ def _gitleaks(mode: str, source: Path, run, log_opts: str | None = None,
 
 
 def fast_scan(repo: Path, staged: bool = True, run=subprocess.run,
-              timeout: float | None = None) -> list[Finding]:
+              timeout: float | None = None, index_file: str | None = None) -> list[Finding]:
     """Pre-commit scan of the STAGED content: semgrep and `gitleaks dir` over the index export.
 
     `timeout` (seconds, optional) bounds the two scanner runs together; on expiry
-    subprocess.TimeoutExpired is raised with the scanner's name in `.tool`."""
+    subprocess.TimeoutExpired is raised with the scanner's name in `.tool`.
+    `index_file` (optional, absolute) is the index to scan instead of the repository's own:
+    a git hook passes git's GIT_INDEX_FILE, which is a temporary index for `commit -a`,
+    `commit <paths>` and similar. git_env() would otherwise strip it."""
     if not staged:
         raise ValueError("fast_scan scans staged changes only; use full_scan for a branch")
     repo = _toplevel(repo, run)
-    names = _names(_git(repo, ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT"], run))
+    env = git_env(GIT_INDEX_FILE=str(index_file)) if index_file else None
+    names = _names(_git(repo, ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT"], run,
+                        env=env))
     if not names:
         return []
     found: list[Finding] = _config_changed(names)
     deadline = None if timeout is None else time.monotonic() + timeout
     with tempfile.TemporaryDirectory(prefix="cta-staged-") as tmp:
         root = Path(tmp)
-        _export(repo, root, run, names)
+        _export(repo, root, run, names, env=env)
         paths, skipped = _scannable(root, names)
         found += skipped
         _remove_symlinks(root)

@@ -347,3 +347,37 @@ def test_slug_patterns_agree():
     import cta_config
 
     assert kbwork.SLUG_PATTERN.pattern == cta_config.SLUG_PATTERN.pattern
+
+
+def _hooks_path(repo):
+    out = subprocess.run(["git", "-C", str(repo), "config", "--local", "--get", "core.hooksPath"],
+                         capture_output=True, text=True)
+    return out.stdout.strip() or None
+
+
+def test_pointer_installs_and_clears_the_commit_gate(tmp_path, kb):
+    import gitgate
+
+    repo = make_repo(tmp_path / "repo")
+    b = kbwork.open_build(kb, "projects", "app", "login", TODAY, tmp_path / "wt")
+    kbwork.write_pointer(repo, b)
+    assert gitgate.gate_installed(repo)
+    assert _hooks_path(repo) == str(gitgate.hooks_dir())
+    assert git(repo, "status", "--porcelain") == ""
+    kbwork.clear_pointer(repo)
+    assert not gitgate.gate_installed(repo)
+    assert _hooks_path(repo) is None
+
+
+def test_clear_pointer_keeps_gate_for_opted_in_repo(tmp_path, kb):
+    import gitgate
+
+    repo = make_repo(tmp_path / "repo")
+    (repo / ".cta").mkdir()
+    (repo / ".cta" / "security.toml").write_text("[gate]\n")
+    git(repo, "add", ".cta/security.toml")
+    git(repo, "commit", "-q", "--no-verify", "-m", "opt in")
+    b = kbwork.open_build(kb, "projects", "app", "login", TODAY, tmp_path / "wt")
+    kbwork.write_pointer(repo, b)
+    kbwork.clear_pointer(repo)
+    assert gitgate.gate_installed(repo)

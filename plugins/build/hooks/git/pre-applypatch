@@ -1,0 +1,23 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# ///
+"""CTA commit gate, run by git (core.hooksPath). The hook name is this file's name.
+
+Scans the index git is about to commit; blocks (exit 1) on findings, a missing scanner,
+the deadline or any error; then chains to the repo's own hook. See scripts/gitgate.py.
+"""
+
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve()
+sys.path.insert(0, str(HERE.parent.parent.parent / "scripts"))
+
+try:
+    import gitgate
+except Exception as exc:  # broken install: fail closed
+    print(f"cta commit gate error: {type(exc).__name__}", file=sys.stderr)
+    sys.exit(1)
+
+sys.exit(gitgate.hook_main(Path(__file__).name, sys.argv[1:]))

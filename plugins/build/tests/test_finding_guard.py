@@ -74,7 +74,7 @@ def test_write_closing_a_new_entry_is_blocked(sec):
 
 def test_write_closing_with_changed_closure_kind_is_blocked_only_if_new(sec):
     # c3 was already closed: re-writing it as accepted-risk is not a new closure
-    content = findings_doc(("c3", "accepted-risk"))
+    content = findings_doc(("a1", "open"), ("b2", "proposed-false-positive"), ("c3", "accepted-risk"))
     assert check("Write", {"file_path": str(sec), "content": content}) is None
 
 
@@ -97,7 +97,8 @@ def test_edit_bypasses_are_closed(sec, old, new):
 
 def test_edit_honours_replace_all(sec):
     assert edit(sec, '"proposed-false-positive"', '"accepted-risk"', replace_all=True) == MESSAGE
-    assert edit(sec, '"status"', '"state"', replace_all=True) is None
+    # dropping the status key makes the open findings disappear: blocked
+    assert edit(sec, '"status"', '"state"', replace_all=True) == MESSAGE
 
 
 def test_edit_allowed_cases(sec):
@@ -120,7 +121,10 @@ def test_multiedit_applies_sequentially(sec):
     steps = [{"old_string": '"open"', "new_string": '"zzz"'},
              {"old_string": '"zzz"', "new_string": '"accepted-risk"'}]
     assert check("MultiEdit", {"file_path": str(sec), "edits": steps}) == MESSAGE
-    assert check("MultiEdit", {"file_path": str(sec), "edits": steps[:1]}) is None
+    # the intermediate "zzz" alone is an unknown status: blocked too
+    assert check("MultiEdit", {"file_path": str(sec), "edits": steps[:1]}) == MESSAGE
+    fine = [{"old_string": '"open"', "new_string": '"zzz"'}, {"old_string": '"zzz"', "new_string": '"fixed"'}]
+    assert check("MultiEdit", {"file_path": str(sec), "edits": fine}) is None
     assert check("MultiEdit", {"file_path": str(sec), "edits": "garbage"}) == MESSAGE
 
 
@@ -143,6 +147,54 @@ def test_garbage_input_allows():
     assert check("Write", {"file_path": PATH}) is None
     assert check("Read", {"file_path": PATH}) is None
     assert check("Write", {"file_path": "x.txt", "content": 5}) is None
+
+
+# ---- disappearing findings, unknown statuses, id renames --------------------------
+
+def test_open_finding_disappearing_is_blocked(sec):
+    content = findings_doc(("b2", "proposed-false-positive"), ("c3", "false-positive"))
+    assert check("Write", {"file_path": str(sec), "content": content}) == MESSAGE
+
+
+def test_closed_finding_may_disappear(sec):
+    content = findings_doc(("a1", "open"), ("b2", "proposed-false-positive"))
+    assert check("Write", {"file_path": str(sec), "content": content}) is None
+
+
+@pytest.mark.parametrize("status", [None, "", "closed", "wontfix", "resolved", 3])
+def test_status_must_stay_an_assistant_status(sec, status):
+    content = findings_doc(("a1", status), ("b2", "proposed-false-positive"), ("c3", "false-positive"))
+    assert check("Write", {"file_path": str(sec), "content": content}) == MESSAGE
+
+
+def test_new_entry_with_unknown_status_is_blocked(sec):
+    content = findings_doc(("a1", "open"), ("b2", "proposed-false-positive"), ("c3", "false-positive"),
+                           ("d4", "ignored"))
+    assert check("Write", {"file_path": str(sec), "content": content}) == MESSAGE
+
+
+def test_assistant_statuses_allowed(sec):
+    for st in ("open", "fixed", "proposed-false-positive"):
+        content = findings_doc(("a1", st), ("b2", st), ("c3", "false-positive"), ("d4", st))
+        assert check("Write", {"file_path": str(sec), "content": content}) is None, st
+
+
+def test_status_removed_by_edit_is_blocked(sec):
+    assert edit(sec, '"id": "a1",\n      "status": "open",', '"id": "a1",') == MESSAGE
+
+
+def test_rename_onto_closed_id_is_blocked(sec):
+    # a1 (open) renamed to c3, which is already closed
+    assert edit(sec, '"id": "a1",\n      "status": "open"', '"id": "c3",\n      "status": "false-positive"') == MESSAGE
+    content = findings_doc(("c3", "false-positive"), ("b2", "proposed-false-positive"), ("c3", "false-positive"))
+    assert check("Write", {"file_path": str(sec), "content": content}) == MESSAGE
+
+
+def test_rename_onto_closed_id_with_a_new_open_twin_is_blocked(sec):
+    # the original open entry is renamed onto a closed id, and a fresh a1 keeps the count
+    content = findings_doc(("a1", "open"), ("b2", "proposed-false-positive"), ("c3", "false-positive"),
+                           ("c3", "false-positive"))
+    assert check("Write", {"file_path": str(sec), "content": content}) == MESSAGE
 
 
 # ---- Bash (Review Focus 4) ----------------------------------------------------
@@ -184,6 +236,17 @@ BLOCKED_BASH = [
     "echo '{\"st'\"atus\"'\": 1}' > security.json",
     "awk '{print}' security.json > out.json; status=1 mv out.json security.json",
     "bash -c \"sed -i 's/a/b/' security.json # status\"",
+    # in-place edits, find -exec, redirects and tee aimed under .cta/ or a builds/ folder
+    "sed -i 's/a/b/' .cta/builds/x/notes.md", "perl -i -pe 's/a/b/' builds/x/y.txt",
+    "ex -sc '%s/a/b/|x' .cta/builds/x/record", "vim -es -c '%s/a/b/' -c wq .cta/x",
+    "ed -s .cta/builds/x/record < script", "patch .cta/builds/x/record < p.diff",
+    "patch -p1 -d .cta < p.diff", "git apply --directory=.cta x.patch",
+    "find .cta -name '*.json' -exec sed -i s/a/b/ {} +", "find builds -type f -execdir sh -c 'x' \\;",
+    "echo x > .cta/builds/x/notes", "echo x >> projects/app/builds/2026-01-02-login/review.md",
+    "echo x | tee builds/x/f", "sed -i 's/a/b/' .c*/builds/x/f", "sed -i 's/a/b/' ./*/builds/x/f",
+    "link .cta/builds/x/security.json /tmp/l", "cp -l security.json /tmp/h", "cp --link security.json h",
+    "cp -al .cta/builds/x/security.json h", "rm .cta/builds/x/security.json", "truncate -s 0 security.json",
+    "mv .cta/builds/x/notes.md /tmp/n", "cp /tmp/n .cta/builds/x/",
 ]
 
 
@@ -210,12 +273,22 @@ ALLOWED_BASH = [
     "python3 -c \"import json; d=json.load(open('security.json')); print(len(d))\"",
     "sed -n '1,5p' security.json", "cp security.json /tmp/backup.json", "sed -i 's/a/b/' notes.json",
     "cp /tmp/a.json /tmp/b.json", "echo hi > out.json",
+    "cat .cta/builds/x/notes.md", "sed -n p .cta/x", "find .cta -name x", "grep -r x builds/",
+    "ls builds/", "sed -i 's/a/b/' src/app.py", "echo hi > /tmp/out", "cp .cta/builds/x/notes.md /tmp/n",
 ]
 
 
 @pytest.mark.parametrize("command", ALLOWED_BASH)
 def test_closure_guard_allows_reads_and_unrelated(command):
     assert check("Bash", {"command": command}) is None, command
+
+
+def test_cwd_inside_a_builds_folder_protects_relative_paths(tmp_path):
+    folder = tmp_path / ".cta" / "builds" / "x"
+    assert check("Bash", {"command": "sed -i 's/a/b/' notes.txt"}, str(folder))
+    assert check("Bash", {"command": "echo x > notes.txt"}, str(folder))
+    assert check("Bash", {"command": "sed -i 's/a/b/' notes.txt"}, str(tmp_path)) is None
+    assert check("Bash", {"command": "cat notes.txt"}, str(folder)) is None
 
 
 def test_proposed_via_bash_write_is_still_blocked():
