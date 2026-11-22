@@ -161,7 +161,8 @@ def test_closed_finding_may_disappear(sec):
     assert check("Write", {"file_path": str(sec), "content": content}) is None
 
 
-@pytest.mark.parametrize("status", [None, "", "closed", "wontfix", "resolved", 3])
+@pytest.mark.parametrize("status", [None, "", "closed", "wontfix", "resolved", 3, True,
+                                    ["accepted-risk"], {"v": "accepted-risk"}, ["open"]])
 def test_status_must_stay_an_assistant_status(sec, status):
     content = findings_doc(("a1", status), ("b2", "proposed-false-positive"), ("c3", "false-positive"))
     assert check("Write", {"file_path": str(sec), "content": content}) == MESSAGE
@@ -247,6 +248,7 @@ BLOCKED_BASH = [
     "link .cta/builds/x/security.json /tmp/l", "cp -l security.json /tmp/h", "cp --link security.json h",
     "cp -al .cta/builds/x/security.json h", "rm .cta/builds/x/security.json", "truncate -s 0 security.json",
     "mv .cta/builds/x/notes.md /tmp/n", "cp /tmp/n .cta/builds/x/",
+    "cp -al builds/x /tmp/y", "cp -a -l .cta/builds /tmp/y", "cp --link -r builds /tmp/y",
 ]
 
 
@@ -315,3 +317,29 @@ def test_hook_exit_codes():
 def test_matt_only_matches_findings_module():
     import findings
     assert finding_guard.MATT_ONLY == findings.MATT_ONLY
+
+
+def test_non_string_status_in_current_file_does_not_crash(tmp_path):
+    path = tmp_path / "security.json"
+    path.write_text(json.dumps({"findings": [{"id": "a", "status": ["x"]}, {"id": "b", "status": "open"}]}))
+    assert edit(path, '"open"', '"fixed"') == MESSAGE  # a1's non-string status is a violation
+
+
+@pytest.mark.parametrize("payload,code", [
+    ({"tool_name": "Write", "tool_input": {"file_path": PATH, "content": "{}"}}, 2),
+    ({"tool_name": "Edit", "tool_input": {"file_path": "/x/Security.JSON"}}, 2),
+    ({"tool_name": "Bash", "tool_input": {"command": "cat security.json"}}, 2),
+    ({"tool_name": "Write", "tool_input": {"file_path": "notes.txt", "content": "x"}}, 0),
+    ({"tool_name": "Bash", "tool_input": {"command": "ls"}}, 0),
+])
+def test_unexpected_error_fails_closed_for_findings_files(payload, code, monkeypatch, capsys):
+    import io
+
+    def boom(*_a, **_k):
+        raise TypeError("x")
+
+    monkeypatch.setattr(finding_guard, "check", boom)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
+    with pytest.raises(SystemExit) as info:
+        finding_guard.main()
+    assert info.value.code == code

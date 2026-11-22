@@ -60,6 +60,9 @@ REFUSED = [
     "sed -i '/hooks/d' .git/config", "echo > .git/config",
     "bash -c \"git commit --no-verify -m x\"", "git com\"mit\" -n -m x", "git commit -m \"$(echo x)\" -n",
     "git -c alias.x='commit -n' x -m y", "git -c alias.x='!git commit --no-verify' x",
+    "git config --remove-section core", "git config --rename-section core old",
+    "git config include.path /tmp/a.cfg", "git config --add includeIf.gitdir:/x/.path /tmp/a.cfg",
+    "echo x >> .git/config.worktree", "rm -r .git/cta", "echo '{}' > .git/cta/gate.json",
 ]
 
 
@@ -119,6 +122,8 @@ def test_file_tools_refused_on_gate_files(tool, extra, plain, gated):
         assert check(tool, {"file_path": ".cta/gate.json", **extra}, str(repo))
     assert check(tool, {"file_path": str(HOOK_DIR / "pre-commit"), **extra}, str(plain))
     assert check(tool, {"file_path": str(gated / ".git" / "config"), **extra}, str(gated))
+    assert check(tool, {"file_path": str(gated / ".git" / "config.worktree"), **extra}, str(gated))
+    assert check(tool, {"file_path": str(plain / ".git" / "cta" / "gate.json"), **extra}, str(plain))
     assert check(tool, {"file_path": str(gated / "a.py"), **extra}, str(gated)) is None
 
 

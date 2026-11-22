@@ -18,7 +18,8 @@ either as given or after resolving symlinks (relative paths use the payload `cwd
   - more entries are closed (MATT_ONLY status) than before;
   - an entry that was not closed disappears (removed, renamed, or its `status` dropped);
   - an entry that is not closed carries anything other than `open`, `fixed` or
-    `proposed-false-positive` (null, empty, a number, an unknown word).
+    `proposed-false-positive` (any non-string such as null, a number, a list or an object;
+    an empty or unknown word).
   Entries already closed stay editable and may be removed. Renaming an open finding onto
   an already-closed id is caught by the disappearance rule, also when a fresh entry
   reuses the old id. The call is blocked (fail closed) when the current file cannot be
@@ -37,8 +38,8 @@ backticks), per command segment:
      `security.json`, or is a glob that matches `security.json` and also contains
      `json` or `sec`, or sits under a `builds` directory; or
   3. a shell edit aimed under `.cta/` or a `builds/` folder: a redirection target, `tee`,
-     `sponge`, `mv`, `rsync`, `cp`/`install` target, `dd of=`, an in-place `sed`/`perl`/
-     `ruby`/`awk`, `ex`, `ed`, `vi`/`vim`/`nvim`, `patch`, `git apply`, or `find` with
+     `sponge`, `mv`, `rsync`, `cp`/`install` target, `dd of=`, `cp -l`/`--link` (also
+     `cp -al` of a whole tree), an in-place `sed`/`perl`/`ruby`/`awk`, `ex`, `ed`, `vi`/`vim`/`nvim`, `patch`, `git apply`, or `find` with
      `-exec`/`-execdir`/`-ok`/`-okdir`/`-delete`, when an argument names such a path or
      globs into one (a glob component that matches `.cta` or `builds`, so a bare `*`
      counts), or the payload `cwd` itself lies under one and the argument is relative.
@@ -53,8 +54,9 @@ output, `cd` to a computed directory); scripts and programs that edit files them
 (a script file written by a tool call that does not touch a protected path, then run);
 a patch file whose content targets a protected path when no argument names one.
 
-Exit 2 with the reason on stderr blocks; anything else exits 0. Malformed input
-and unexpected errors fail open (the commit gate, not this guard, fails closed).
+Exit 2 with the reason on stderr blocks; anything else exits 0. Input that is not JSON
+exits 0. An unexpected error fails CLOSED (exit 2) when the payload's `file_path` or
+`command` names a `security.json`, and open otherwise.
 """
 
 from __future__ import annotations
@@ -96,10 +98,11 @@ _PROTECTED_DIRS = (".cta", "builds")
 
 
 _ABSENT = object()
+_BAD = object()  # any status that is not a string (null, number, list, object)
 
 
 def _norm(value):
-    return value.strip().lower() if isinstance(value, str) else value
+    return value.strip().lower() if isinstance(value, str) else _BAD
 
 
 def _closed(value) -> bool:
@@ -288,6 +291,8 @@ def _segment_writes(words: list[str], targets: list[str], cwd: str | None = None
             return True
         if "find" in names and names & {"-exec", "-execdir", "-ok", "-okdir", "-delete"}:
             return True
+        if "cp" in names and any(f == "--link" or re.fullmatch(r"-[A-Za-z]*l[A-Za-z]*", f) for f in flags):
+            return True  # hard links into a protected tree can be edited freely afterwards
     if cands:
         if names & {"ln", "link", "rm", "unlink", "truncate", "shred"}:
             return True
@@ -334,11 +339,26 @@ def check(tool_name: str, tool_input: dict, cwd=None) -> str | None:
     return None
 
 
+def _mentions_findings(data) -> bool:
+    try:
+        tool_input = data.get("tool_input") or {}
+        text = str(tool_input.get("file_path") or "") + " " + str(tool_input.get("command") or "")
+        return _TARGET in text.lower().replace("\\", "/")
+    except Exception:
+        return False
+
+
 def main() -> None:
     try:
         data = json.load(sys.stdin)
-        reason = check(data.get("tool_name", ""), data.get("tool_input") or {}, data.get("cwd"))
     except Exception:
+        sys.exit(0)
+    try:
+        reason = check(data.get("tool_name", ""), data.get("tool_input") or {}, data.get("cwd"))
+    except Exception as exc:  # fail closed when a findings file is involved
+        if _mentions_findings(data):
+            print(f"{MESSAGE} (finding guard error: {type(exc).__name__})", file=sys.stderr)
+            sys.exit(2)
         sys.exit(0)
     if reason:
         print(reason, file=sys.stderr)

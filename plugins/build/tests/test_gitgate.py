@@ -154,9 +154,11 @@ def test_install_sets_hooks_path_and_records_state(tmp_path, env):
     gitgate.install_gate(repo)
     assert hooks_path(repo, env) == str(HOOK_DIR.resolve())
     assert gitgate.gate_installed(repo)
-    state = json.loads((repo / ".cta" / "gate.json").read_text())
-    assert state == {"hooks_path": str(HOOK_DIR.resolve()), "previous": None}
-    assert git(repo, env, "status", "--porcelain").stdout == ""  # gate.json git-excluded
+    state = json.loads((repo / ".git" / "cta" / "gate.json").read_text())
+    assert state["hooks_path"] == str(HOOK_DIR.resolve())
+    assert state["previous"] is None and state["chain"] is None
+    assert not (repo / ".cta" / "gate.json").exists()  # nothing in the work tree
+    assert git(repo, env, "status", "--porcelain").stdout == ""
 
 
 def test_install_is_idempotent_and_keeps_previous(tmp_path, env):
@@ -164,13 +166,11 @@ def test_install_is_idempotent_and_keeps_previous(tmp_path, env):
     git(repo, env, "config", "core.hooksPath", "myhooks")
     gitgate.install_gate(repo)
     gitgate.install_gate(repo)
-    state = json.loads((repo / ".cta" / "gate.json").read_text())
-    assert state["previous"] == "myhooks"
-    exclude = (repo / ".git" / "info" / "exclude").read_text().splitlines()
-    assert exclude.count(".cta/gate.json") == 1
+    state = json.loads((repo / ".git" / "cta" / "gate.json").read_text())
+    assert state["previous"] == "myhooks" and state["chain"] == "myhooks"
     gitgate.uninstall_gate(repo)
     assert hooks_path(repo, env) == "myhooks"
-    assert not (repo / ".cta" / "gate.json").exists()
+    assert not (repo / ".git" / "cta" / "gate.json").exists()
     assert not gitgate.gate_installed(repo)
 
 
@@ -184,14 +184,15 @@ def test_uninstall_without_previous_unsets(tmp_path, env):
 
 def test_install_over_stale_plugin_dir_keeps_previous(tmp_path, env):
     repo = make_repo(tmp_path / "repo", env)
-    (repo / ".cta").mkdir()
+    (repo / ".git" / "cta").mkdir()
     old = str(tmp_path / "old-plugin" / "hooks" / "git")
-    (repo / ".cta" / "gate.json").write_text(json.dumps({"hooks_path": old, "previous": "mine"}))
+    (repo / ".git" / "cta" / "gate.json").write_text(
+        json.dumps({"hooks_path": old, "previous": "mine", "chain": "mine"}))
     git(repo, env, "config", "core.hooksPath", old)
     assert not gitgate.gate_installed(repo)  # the recorded directory is gone
     gitgate.install_gate(repo)
     assert hooks_path(repo, env) == str(HOOK_DIR.resolve())
-    assert json.loads((repo / ".cta" / "gate.json").read_text())["previous"] == "mine"
+    assert json.loads((repo / ".git" / "cta" / "gate.json").read_text())["previous"] == "mine"
 
 
 def test_uninstall_leaves_a_foreign_hooks_path(tmp_path, env):
@@ -202,11 +203,38 @@ def test_uninstall_leaves_a_foreign_hooks_path(tmp_path, env):
     assert hooks_path(repo, env) == "other"
 
 
-# ---- not gated ------------------------------------------------------------------------
+def test_empty_previous_hooks_path_restored_exactly(tmp_path, env):
+    repo = make_repo(tmp_path / "repo", env)
+    git(repo, env, "config", "core.hooksPath", "")
+    gitgate.install_gate(repo)
+    gitgate.uninstall_gate(repo)
+    out = git(repo, env, "config", "--local", "--get", "core.hooksPath", check=False)
+    assert out.returncode == 0 and out.stdout == "\n"
 
-def test_not_gated_commit_passes_without_scanners(tmp_path, bins):
+
+def bare_hooks(repo, env):
+    """core.hooksPath at the CTA hooks with no install record: the hooks' ungated branch."""
+    git(repo, env, "config", "core.hooksPath", str(HOOK_DIR.resolve()))
+
+
+# ---- not gated (Review Focus 1) ----------------------------------------------------------
+
+def test_gate_inactive_outside_run_allows(tmp_path, bins):
     env = make_env(bins, scanners=False)
-    repo = make_repo(tmp_path / "repo", env, install=True)
+    repo = make_repo(tmp_path / "repo", env, gated=True, install=True)
+    kbwork.clear_pointer(repo)  # the run ended: pointer gone, gate uninstalled
+    (repo / "a.py").write_text(f"x = '{MARK}'\n")
+    git(repo, env, "add", "a.py")
+    before = head(repo, env)
+    result = git(repo, env, "commit", "-q", "-m", "x", check=False)
+    assert result.returncode == 0, result.stderr
+    assert head(repo, env) != before
+
+
+def test_hooks_without_install_record_do_not_gate(tmp_path, bins):
+    env = make_env(bins, scanners=False)
+    repo = make_repo(tmp_path / "repo", env)
+    bare_hooks(repo, env)
     (repo / "a.py").write_text(f"x = '{MARK}'\n")
     git(repo, env, "add", "a.py")
     before = head(repo, env)
@@ -217,7 +245,8 @@ def test_not_gated_commit_passes_without_scanners(tmp_path, bins):
 
 def test_tracked_security_toml_gates(tmp_path, bins):
     env = make_env(bins, scanners=False)
-    repo = make_repo(tmp_path / "repo", env, install=True)
+    repo = make_repo(tmp_path / "repo", env)
+    bare_hooks(repo, env)
     (repo / ".cta").mkdir(exist_ok=True)
     (repo / ".cta" / "security.toml").write_text("[gate]\n")
     git(repo, env, "add", ".cta/security.toml")
@@ -505,13 +534,62 @@ def test_non_executable_chained_hook_is_skipped(gated, env, tmp_path):
 
 
 def test_not_gated_still_chains(tmp_path, env):
-    repo = make_repo(tmp_path / "repo", env, install=True)
+    repo = make_repo(tmp_path / "repo", env)
+    bare_hooks(repo, env)
     marker = tmp_path / "marker"
     chained_hook(repo / ".git" / "hooks", "pre-commit", 4, marker)
     (repo / "a.py").write_text("x = 1\n")
     git(repo, env, "add", "a.py")
     assert git(repo, env, "commit", "-m", "x", check=False).returncode != 0
     assert marker.exists()
+
+
+# ---- gate state survives work-tree deletes; linked worktrees; global hooksPath -------------
+
+WIPES = ["rm -rf .cta", "git clean -fdx", "rm .cta/active-*", "rm -rf .cta && git clean -fdx"]
+
+
+@pytest.mark.parametrize("wipe", WIPES)
+def test_deleting_work_tree_state_does_not_ungate(wipe, gated, env):
+    (gated / "a.py").write_text(f"x = '{MARK}'\n")
+    git(gated, env, "add", "a.py")
+    sh(wipe, gated, env)
+    result = git(gated, env, "commit", "-m", "x", check=False)
+    assert result.returncode != 0 and "a.py" in result.stderr
+    assert not leaked(gated, env)
+
+
+def test_linked_worktree_commit_is_gated(gated, env, tmp_path):
+    wt = tmp_path / "linked"
+    git(gated, env, "worktree", "add", "-q", "-b", "feature", str(wt))
+    assert not (wt / ".cta" / "active-build").exists()
+    (wt / "s.py").write_text(f"s = '{MARK}'\n")
+    git(wt, env, "add", "s.py")
+    result = git(wt, env, "commit", "-m", "x", check=False)
+    assert result.returncode != 0 and "s.py" in result.stderr
+    assert not leaked(gated, env)
+
+
+def test_global_hooks_path_is_chained_after_install(tmp_path, env, monkeypatch):
+    marker = tmp_path / "marker"
+    chained_hook(tmp_path / "globalhooks", "pre-commit", 9, marker)
+    gcfg = tmp_path / "global.gitconfig"
+    gcfg.write_text(f"[core]\n\thooksPath = {tmp_path / 'globalhooks'}\n")
+    genv = {**env, "GIT_CONFIG_GLOBAL": str(gcfg)}
+    repo = make_repo(tmp_path / "repo", env, gated=True)  # init commit before the global hook
+    (repo / "a.py").write_text("x = 1\n")
+    git(repo, genv, "add", "a.py")
+    assert git(repo, genv, "commit", "-m", "x", check=False).returncode != 0  # global hook blocks
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gcfg))
+    gitgate.install_gate(repo)
+    marker.unlink()
+    before = head(repo, genv)
+    assert git(repo, genv, "commit", "-m", "x", check=False).returncode != 0  # still blocked
+    assert head(repo, genv) == before and marker.exists()
+    direct = subprocess.run([str(HOOK_DIR / "pre-commit")], cwd=repo, env=genv, capture_output=True, text=True)
+    assert direct.returncode == 9
+    gitgate.uninstall_gate(repo)
+    assert hooks_path(repo, genv) is None  # only the local value is restored
 
 
 # ---- check(): fail closed, deadline ---------------------------------------------------------

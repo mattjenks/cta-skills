@@ -12,15 +12,20 @@ already passed a gate, and the branch-level `full_scan` (secure step, `pr` check
 Threat model: the assistant's mistakes and casual bypasses, not a determined attacker.
 
 Install: `install_gate(repo)` points the repo-local `core.hooksPath` at the hook directory of
-this plugin (resolved at install time from this file's location) and records the previous value
-in `.cta/gate.json` (git-excluded), so the hooks can chain to the hook the repo would otherwise
-have run. `kbwork.write_pointer` installs it for a `loop` run and `kbwork.clear_pointer` removes
-it, unless the repo opted in permanently with a tracked `.cta/security.toml`.
+this plugin (resolved at install time from this file's location). It writes the gate record
+`<git common dir>/cta/gate.json`: the plugin hook directory, the previous LOCAL value (`previous`,
+restored exactly on uninstall, empty string included) and the previous EFFECTIVE value (`chain`,
+read with the user's normal git config, so a global `core.hooksPath` is chained too). The record
+lives in the git common dir, out of reach of `rm -rf .cta` and `git clean -fdx`, and is shared by
+every linked worktree, which also shares `core.hooksPath`. The record is also the gate marker:
+while it exists the repository is gated. `kbwork.write_pointer` installs the gate for a `loop`
+run and `kbwork.clear_pointer` removes it, unless the repo opted in permanently with a tracked
+`.cta/security.toml`.
 
 A hook run (`check`):
 - The repository is the one git runs the hook in; the index is git's GIT_INDEX_FILE (made
   absolute), else the repository's index.
-- Not gated (no `.cta/active-build`, no tracked `.cta/security.toml`): pass.
+- Not gated (no gate record, no `.cta/active-build`, no tracked `.cta/security.toml`): pass.
 - Nothing staged against HEAD, or only `*.md` files: pass.
 - semgrep or gitleaks missing (osv-scanner too when a staged path is a manifest): block with
   an install instruction.
@@ -29,7 +34,7 @@ A hook run (`check`):
   matched text) plus info items go to stderr.
 - Any exception (deadline exceeded included): block with `cta commit gate error: <type>`.
 Blocking is exit 1, the git-hook convention. After a pass, the hook chains to the previous
-`core.hooksPath` (relative to the work tree), else `<git common dir>/hooks`, when `<name>`
+effective `core.hooksPath` (relative to the work tree), else `<git common dir>/hooks`, when `<name>`
 exists there and is executable, passing arguments and stdin, and returns its exit code. Chaining
 also happens when the repo is not gated.
 """
@@ -46,7 +51,7 @@ from pathlib import Path
 from findings import git_env
 
 HOOK_NAMES = ("pre-commit", "pre-merge-commit", "pre-applypatch")
-STATE = Path(".cta") / "gate.json"
+STATE = Path("cta") / "gate.json"  # under the git common dir
 POINTER = Path(".cta") / "active-build"
 OPT_IN = ".cta/security.toml"
 GATE_DEADLINE = 100  # seconds for the scanners together
@@ -77,10 +82,28 @@ def _toplevel(repo: Path) -> Path:
 
 
 def _hooks_path(top: Path) -> str | None:
+    """The repo-local value; None when unset (an empty value stays "")."""
     proc = _git(top, "config", "--local", "--get", "core.hooksPath")
     if proc.returncode != 0:
         return None
-    return proc.stdout.rstrip("\n") or None
+    return proc.stdout.rstrip("\n")
+
+
+def _effective_hooks_path(top: Path) -> str | None:
+    """core.hooksPath as git itself would see it, global and system config included: this one
+    read deliberately does not use git_env()."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
+    proc = _git(top, "config", "--get", "core.hooksPath", env=env)
+    return (proc.stdout.rstrip("\n") or None) if proc.returncode == 0 else None
+
+
+def common_dir(top: Path) -> Path:
+    proc = _git(Path(top), "rev-parse", "--git-common-dir")
+    if proc.returncode != 0:
+        raise GateError("git rev-parse --git-common-dir failed")
+    common = Path(proc.stdout.rstrip("\n"))
+    return common if common.is_absolute() else Path(top) / common
 
 
 def _set_hooks_path(top: Path, value: str | None) -> None:
@@ -93,10 +116,14 @@ def _set_hooks_path(top: Path, value: str | None) -> None:
         raise GateError("git config core.hooksPath failed")
 
 
+def state_path(top: Path) -> Path:
+    return common_dir(top) / STATE
+
+
 def read_state(top: Path) -> dict | None:
     try:
-        data = json.loads((Path(top) / STATE).read_text())
-    except (OSError, ValueError):
+        data = json.loads(state_path(top).read_text())
+    except (OSError, ValueError, GateError):
         return None
     return data if isinstance(data, dict) else None
 
@@ -112,31 +139,37 @@ def _same(a: str | None, b: str | Path | None) -> bool:
 def install_gate(repo: Path) -> None:
     """Point core.hooksPath at this plugin's git hooks, remembering the previous value.
     Idempotent; a gate left pointing at an older plugin location is moved here."""
-    import kbwork
-
     top = _toplevel(repo)
     target = str(hooks_dir())
     current = _hooks_path(top)
     state = read_state(top) or {}
     ours = _same(current, target) or (current is not None and current == state.get("hooks_path"))
-    previous = state.get("previous") if ours else current
-    (top / STATE).parent.mkdir(parents=True, exist_ok=True)
-    (top / STATE).write_text(json.dumps({"hooks_path": target, "previous": previous}, indent=2) + "\n")
-    kbwork.exclude_path(top, STATE.as_posix())
+    if ours:
+        previous, chain = state.get("previous"), state.get("chain")
+    else:
+        previous = current
+        chain = _effective_hooks_path(top)
+        if _same(chain, target):
+            chain = None
+    record = {"hooks_path": target, "previous": previous, "chain": chain,
+              "build": (top / POINTER).exists(), "opted_in": opted_in(top)}
+    path = state_path(top)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2) + "\n")
     if current != target:
         _set_hooks_path(top, target)
 
 
 def uninstall_gate(repo: Path) -> None:
-    """Restore the previous core.hooksPath (or unset it) and drop `.cta/gate.json`. A hooksPath
-    someone else has set since install is left alone."""
+    """Restore the previous local core.hooksPath exactly (or unset it) and drop the gate record.
+    A hooksPath someone else has set since install is left alone."""
     top = _toplevel(repo)
     state = read_state(top) or {}
     current = _hooks_path(top)
     if _same(current, hooks_dir()) or (current is not None and current == state.get("hooks_path")):
         previous = state.get("previous")
-        _set_hooks_path(top, previous if isinstance(previous, str) and previous else None)
-    (top / STATE).unlink(missing_ok=True)
+        _set_hooks_path(top, previous if isinstance(previous, str) else None)
+    state_path(top).unlink(missing_ok=True)
 
 
 def gate_installed(repo: Path) -> bool:
@@ -156,7 +189,10 @@ def opted_in(repo: Path) -> bool:
 
 
 def is_gated(top: Path) -> bool:
-    return (Path(top) / POINTER).exists() or opted_in(top)
+    """A gate record in the git common dir, `.cta/active-build`, or a tracked security.toml."""
+    if (Path(top) / POINTER).exists() or state_path(top).exists():
+        return True
+    return opted_in(top)
 
 
 # ------------------------------------------------------------------- check
@@ -220,7 +256,7 @@ def check(top: Path, index_file: str | None, scan_fn=None, which_fn=None) -> tup
 
 def _previous_hook(top: Path, name: str) -> Path | None:
     state = read_state(top) or {}
-    previous = state.get("previous")
+    previous = state.get("chain")
     if isinstance(previous, str) and previous:
         directory = Path(os.path.expanduser(previous))
         if not directory.is_absolute():

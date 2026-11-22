@@ -18,8 +18,11 @@ command is refused when its text contains:
 - `hooksPath` (any case);
 - `GIT_CONFIG` (any `GIT_CONFIG*` variable);
 - `-c core.`, `-c include.`/`-c includeIf.` (an include can set core.hooksPath), or `--config-env`;
+- `--remove-section core` / `--rename-section core`, and `include.path` / `includeIf.*.path`
+  anywhere (for example `git config include.path x`);
 - `.git/hooks`;
-- `.cta/gate.json`, `hooks/git` or `.git/config` together with a write (`>`, rm, mv, cp, tee,
+- the gate record (`cta/gate.json`, `.git/cta`), `hooks/git`, `.git/config` or
+  `.git/config.worktree` together with a write (`>`, rm, mv, cp, tee,
   chmod, chown, ln, unlink, truncate, install, rsync, dd, shred, `sed`/`perl` in place);
 - `git ... commit` followed by a short-option cluster holding `n` (`-n`, `-nm`, `-anm`), read up
   to the first letter that takes a value (`m F C c t u S`), so `-mnote` and `-uno` pass;
@@ -29,9 +32,11 @@ False positives are accepted and expected: the text is matched wherever it appea
 commit message or an echo that contains `--no-verify` or ` -n` after `git commit`, a
 `git push --no-verify`, `cat .git/config 2>/dev/null`, or `ls .git/hooks` are refused too.
 
-Write / Edit / MultiEdit: refused for `.cta/gate.json` and any file under this plugin's git-hook
-directory (symlinks resolved), in any repository; for `.git/config` and files under `.git/hooks`
-of a gated repository.
+Write / Edit / MultiEdit: refused for any `cta/gate.json` (the gate record in the git common
+dir) and any file under this plugin's git-hook directory (symlinks resolved), in any repository;
+for `.git/config`, `.git/config.worktree` and files under `.git/hooks` of a gated repository.
+Deleting `.cta/` (rm -rf .cta, git clean -fdx) does not ungate: the gate record lives in the
+git common dir.
 
 Not covered (documented, accepted): commands built at runtime (variables, `eval` of computed
 text, `cd` to a computed path), scripts and programs that run git or edit the git config
@@ -69,7 +74,10 @@ _HOOKS_PATH = re.compile(r"hookspath", re.IGNORECASE)
 _GIT_CONFIG = re.compile(r"GIT_CONFIG")
 _CONFIG_OPT = re.compile(r"(?<![\w-])-c\s*(?:core|include|includeif)\.|--config-env", re.IGNORECASE)
 _GIT_HOOKS = re.compile(r"\.git/hooks")
-_GATE_FILES = re.compile(r"\.cta/gate\.json|hooks/git(?![\w.-])|\.git/config(?![\w.-])")
+_GATE_FILES = re.compile(
+    r"cta/gate\.json|\.git/cta(?![\w.-])|hooks/git(?![\w.-])|\.git/config(?:\.worktree)?(?![\w.-])")
+_SECTION = re.compile(r"--(?:remove|rename)-section\s+core\b", re.IGNORECASE)
+_INCLUDE = re.compile(r"\binclude(?:if\.\S*)?\.path\b", re.IGNORECASE)
 _WRITE = re.compile(
     r">|(?<![\w./-])(?:rm|mv|cp|tee|chmod|chown|ln|unlink|truncate|install|rsync|dd|shred)(?![\w.-])"
     r"|(?<![\w./-])(?:sed|perl|ruby)\b.*\s(?:-[A-Za-z]*i|--in-place)")
@@ -112,11 +120,15 @@ def _rules(text: str) -> list[tuple[str, str]]:
         hits.append(("any", "GIT_CONFIG* variables can override core.hooksPath."))
     if _CONFIG_OPT.search(text):
         hits.append(("any", "`-c core.*`, `-c include.*` and --config-env can override core.hooksPath."))
+    if _SECTION.search(text):
+        hits.append(("any", "removing or renaming the [core] section drops core.hooksPath."))
+    if _INCLUDE.search(text):
+        hits.append(("any", "an include.path can set core.hooksPath."))
     if _GIT_HOOKS.search(text):
         hits.append(("any", ".git/hooks is chained by the commit gate; leave it alone."))
     if _GATE_FILES.search(text) and _WRITE.search(text):
-        hits.append(("any", "the commit gate's files (.cta/gate.json, the git hooks, .git/config) "
-                            "are not edited from the shell."))
+        hits.append(("any", "the commit gate's files (the gate record under .git/cta, the git hooks, "
+                            ".git/config, .git/config.worktree) are not edited from the shell."))
     if _commit_short_n(text):
         hits.append(("any", "`git commit -n` is --no-verify and skips the commit gate."))
     if "active-build" in text and _REMOVE.search(text):
@@ -191,12 +203,12 @@ def _file(tool_input: dict, cwd: Path) -> str | None:
     path = raw if os.path.isabs(raw) else os.path.join(str(cwd), raw)
     real = os.path.realpath(path)
     for p in (os.path.normpath(path), real):
-        if p.replace("\\", "/").endswith("/.cta/gate.json") or _is_under(p, GIT_HOOK_DIR):
+        if p.replace("\\", "/").endswith("cta/gate.json") or _is_under(p, GIT_HOOK_DIR):
             return PREFIX + "the commit gate's own files are not edited." + TAIL
     import gitgate
 
     norm = real.replace("\\", "/")
-    if norm.endswith("/.git/config") and gitgate.is_gated(Path(real).parent.parent):
+    if norm.endswith(("/.git/config", "/.git/config.worktree")) and gitgate.is_gated(Path(real).parent.parent):
         return PREFIX + ".git/config holds core.hooksPath for the commit gate." + TAIL
     if "/.git/hooks/" in norm:
         top = Path(norm.split("/.git/hooks/")[0])
