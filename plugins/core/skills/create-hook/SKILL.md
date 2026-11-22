@@ -27,13 +27,13 @@ ask what the hook should guarantee.
    unexpected exception exits 0 (fail open): a bug in a hook must not brick a session. The only deliberate
    non-zero exit is the block.
 4. **Wiring.** The command is `uv run --script "${CLAUDE_PLUGIN_ROOT}/hooks/<name>.py"`, never a bare
-   `python`. Scope the `matcher` to the tools the guarantee needs, not every call.
+   `python`. Write the literal text `${CLAUDE_PLUGIN_ROOT}` in `hooks.json`; the harness expands it, so never
+   substitute a path. Scope the `matcher` to the tools the guarantee needs, not every call.
 5. **Tests through a subprocess.** Every hook ships block and allow tests that execute the real script in a
    subprocess and assert the exit code, in `plugins/<plugin>/tests/test_<name>.py`. Reading the code is not
    proof. See `references/skeleton-and-tests.md`.
-6. **Version bump and changelog.** In the same commit, bump the plugin version in BOTH
-   `plugins/<plugin>/.claude-plugin/plugin.json` and its `.claude-plugin/marketplace.json` entry, and add a
-   `## <version> — <summary>` heading with a line for the hook to `CHANGELOG.md`.
+6. **Versions and changelog.** Use a conventional commit (`feat(core): ...`). release-please owns the plugin
+   version in both manifests and writes the `CHANGELOG.md`; never hand-edit them.
 7. **No personal data.** No emails, home-directory paths or private names in the script, the wiring or the
    tests. Use neutral names such as "Ada". Personal values come from `~/.config/cta/config.toml` through the
    plugin's `cta_config.py` helper, never from the repository.
@@ -74,11 +74,12 @@ If the fetch fails, proceed from the table and say so in the report.
    if the ask is vague.
 2. **Read the current docs** (above) and choose the event and matcher.
 3. **Write the failing tests first** (see `references/skeleton-and-tests.md`), run them and see them fail, because the script does not exist.
-4. **Write the script** from the skeleton, then run the tests until they pass.
+4. **Write the script** from the skeleton, then run the tests until they pass. Read `references/pitfalls.md`
+   first: the venv trap and the `Stop` loop guard bite at this step.
 5. **Wire it** into `plugins/<plugin>/hooks/hooks.json`, merging with existing events and hooks; never clobber
    them. If a hook already exists for that event, extend it. Extend the wiring test in `tests/test_manifests.py`
    if it enumerates events.
-6. **Bump the version and changelog** (house rule 6) and run the full suite:
+6. **Commit and test.** Use a conventional commit (house rule 6; never hand-edit versions) and run the full suite:
    `uv run --with pytest pytest tests plugins -q`.
 7. **Report** what the hook guarantees, the one line to change to adjust it, how to see it work in a live session
    (an action that should be refused), and what you verified. Always add the security note: a hook runs arbitrary
@@ -92,15 +93,15 @@ layers (policy rows plus a subprocess exit-code test) and the wiring test. Every
 
 ## Pitfalls, debugging and limits
 
-Before reporting, read `references/pitfalls.md`: the six pitfalls (the venv trap, `@file` mentions bypassing
+Before writing the script (workflow step 4), read `references/pitfalls.md`: the six pitfalls (the venv trap, `@file` mentions bypassing
 PreToolUse, nested `additionalContext`, exit 1 versus exit 2, a `Stop` hook without a loop guard, the
-non-interactive shell), how to debug with `claude --debug`, and the coverage limits to state to the user.
+non-interactive shell), how to debug with `claude --debug`, and the coverage limits to state in the report.
 Read it at once if a hook never blocks, always blocks or has its output ignored.
 
 ## Resources
 
 - `references/skeleton-and-tests.md`: the script skeleton, `Stop` loop guard and both test layers. Read before writing the script.
-- `references/pitfalls.md`: the six pitfalls, debugging flags and coverage limits. Read before reporting, or when a hook misbehaves.
+- `references/pitfalls.md`: the six pitfalls, debugging flags and coverage limits. Read before writing the script, or when a hook misbehaves.
 - `${CLAUDE_PLUGIN_ROOT}/hooks/secrets_guard.py`: the house blocking hook, the model for structure and fail-open handling.
 - `tests/test_secrets_guard.py` in the plugin: the model for policy rows plus the subprocess exit-code test.
 - `${CLAUDE_PLUGIN_ROOT}/hooks/hooks.json`: the wiring format and `uv run --script` command form.
