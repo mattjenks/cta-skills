@@ -90,6 +90,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import tomllib
 from pathlib import Path
 
@@ -99,7 +100,7 @@ SCANNERS = {
     # --no-git-ignore: semgrep neither calls git nor reads .gitignore, so an export that
     # sits inside some outer work tree is never filtered by that project's git state
     "semgrep": ["semgrep", "--config", "p/default", "--error", "--json", "--disable-nosem",
-                "--no-git-ignore"],
+                "--no-git-ignore", "--timeout", "30"],
     "gitleaks": [
         "gitleaks", "git", "--report-format", "json", "--redact", "--no-banner", "--no-color",
         "--ignore-gitleaks-allow",
@@ -325,12 +326,25 @@ def _config_changed(names: list[bytes]) -> list[Finding]:
 
 # ------------------------------------------------------------ scanner plumbing
 
-def _run(tool: str, argv: list[str], cwd: Path, run):
+def _run(tool: str, argv: list[str], cwd: Path, run, deadline: float | None = None):
+    """Run a scanner. `deadline` (a time.monotonic() instant) bounds it: the call gets the time
+    left, and subprocess.TimeoutExpired (tagged with `.tool`) propagates when it runs out."""
+    kw = {}
+    if deadline is not None:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            exc = subprocess.TimeoutExpired(argv, 0)
+            exc.tool = tool
+            raise exc
+        kw["timeout"] = left
     try:
         # git_env(): gitleaks runs git itself, and must use the source, not a hook's GIT_DIR
-        proc = run(argv, cwd=str(cwd), capture_output=True, text=True, env=git_env())
+        proc = run(argv, cwd=str(cwd), capture_output=True, text=True, env=git_env(), **kw)
     except FileNotFoundError:
         raise ScanError(tool, f"{argv[0]} is not installed") from None
+    except subprocess.TimeoutExpired as exc:
+        exc.tool = tool
+        raise
     if proc.returncode not in (0, 1):
         # stdout is never echoed: it may carry matched source text.
         raise ScanError(tool, proc.stderr or f"exit status {proc.returncode}")
@@ -357,10 +371,10 @@ def _clean_path(path: str, root: Path) -> str:
     return path
 
 
-def _semgrep(root: Path, paths: list[str], run) -> list[Finding]:
+def _semgrep(root: Path, paths: list[str], run, deadline: float | None = None) -> list[Finding]:
     if not paths:
         return []
-    proc = _run("semgrep", [*SCANNERS["semgrep"], *paths], root, run)
+    proc = _run("semgrep", [*SCANNERS["semgrep"], *paths], root, run, deadline)
     data = _json("semgrep", proc)
     if not isinstance(data, dict) or not isinstance(data.get("results"), list):
         raise ScanError("semgrep", "unexpected output shape")
@@ -390,7 +404,7 @@ def _semgrep(root: Path, paths: list[str], run) -> list[Finding]:
 
 
 def _gitleaks(mode: str, source: Path, run, log_opts: str | None = None,
-              strip: Path | None = None) -> list[Finding]:
+              strip: Path | None = None, deadline: float | None = None) -> list[Finding]:
     """`gitleaks dir <export>` (mode "dir") or `gitleaks git` in a throwaway clone (mode "git").
 
     `source` is never the user's working tree: gitleaks would read its .gitleaksignore.
@@ -406,7 +420,7 @@ def _gitleaks(mode: str, source: Path, run, log_opts: str | None = None,
         if log_opts:
             argv.append(f"--log-opts={log_opts}")
         argv.append(str(source))
-        proc = _run("gitleaks", argv, source, run)
+        proc = _run("gitleaks", argv, source, run, deadline)
         try:
             text = report.read_text().strip()
         except FileNotFoundError:
@@ -430,8 +444,12 @@ def _gitleaks(mode: str, source: Path, run, log_opts: str | None = None,
     ]
 
 
-def fast_scan(repo: Path, staged: bool = True, run=subprocess.run) -> list[Finding]:
-    """Pre-commit scan of the STAGED content: semgrep and `gitleaks dir` over the index export."""
+def fast_scan(repo: Path, staged: bool = True, run=subprocess.run,
+              timeout: float | None = None) -> list[Finding]:
+    """Pre-commit scan of the STAGED content: semgrep and `gitleaks dir` over the index export.
+
+    `timeout` (seconds, optional) bounds the two scanner runs together; on expiry
+    subprocess.TimeoutExpired is raised with the scanner's name in `.tool`."""
     if not staged:
         raise ValueError("fast_scan scans staged changes only; use full_scan for a branch")
     repo = _toplevel(repo, run)
@@ -439,6 +457,7 @@ def fast_scan(repo: Path, staged: bool = True, run=subprocess.run) -> list[Findi
     if not names:
         return []
     found: list[Finding] = _config_changed(names)
+    deadline = None if timeout is None else time.monotonic() + timeout
     with tempfile.TemporaryDirectory(prefix="cta-staged-") as tmp:
         root = Path(tmp)
         _export(repo, root, run, names)
@@ -449,8 +468,8 @@ def fast_scan(repo: Path, staged: bool = True, run=subprocess.run) -> list[Findi
         # neither tool can honour them under the new name
         _hide_ignore_files(root)
         _clean_for_semgrep(root)
-        found += _semgrep(root, paths, run)
-        found += _gitleaks("dir", root, run, strip=root)
+        found += _semgrep(root, paths, run, deadline)
+        found += _gitleaks("dir", root, run, strip=root, deadline=deadline)
     return found
 
 

@@ -233,6 +233,15 @@ DETECTED = [
     "git -c alias.ci=commit ci -m x",
     "git com\"mit\" -m x",
     "git commit -m 'unterminated",
+    "timeout 60 git commit -m x", "xargs git commit -m x </dev/null", "nice -n 5 git commit -m x",
+    "sudo -u me git commit -m x", "env -u FOO git commit -m x", "env -C . git commit -m x",
+    "env -i git commit -m x", "command git commit -m x", "time git commit -m x",
+    "bash -o pipefail -c \"git commit -m x\"", "bash -lc 'git commit -m x'",
+    "bash --norc -c 'git commit -m x'", "git -calias.x=commit x -m x",
+    "git -c alias.x='!git commit' x -m x", "git -c alias.x='commit -q' x -m x",
+    "git --config-env=alias.x=V x -m x", "find . -maxdepth 0 -exec git commit -m x \\;",
+    "for i in 1; do git commit -m x; done", "{ git commit -m x; }", "G=git; $G commit -m x",
+    "x=commit; git $x -m x", "git -p commit -m x", "git --no-pager -P commit -m x",
 ]
 
 
@@ -242,7 +251,7 @@ def test_detects_commit_forms(template, tmp_path, capsys):
     stage(repo, "a.py")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
-    command = template.format(repo=repo)
+    command = template.replace("{repo}", str(repo))
     cwd = elsewhere if "{repo}" in template else repo
     code, err = run(command, cwd, lambda r: [finding("high")], capsys=capsys)
     assert code == 2 and "security gate" in err, (command, err)
@@ -283,6 +292,11 @@ REFUSED = [
     "git commit -m x -p", "git commit --patch",
     "git commit -m x --pathspec-from-file=list.txt",
     "git add a.py && git commit -m x", "git add -A; git commit -m x", "git rm a.py && git commit -m x",
+    'git commit -m "$(git add b.py; echo msg)"', 'git commit -m "`git add b.py`msg"',
+    'git commit -m "$(git stash pop >/dev/null; echo m)"', "git commit -F <(git add b.py; echo m)",
+    "git commit -m x; git add b.py", "git commit -m \"`git add b.py`\"",
+    "git commit --pathspec-fr=list.txt -m x", "git commit --pat", "git commit --interact",
+    "git commit --inc a.py", "git commit --on a.py",
     "git stash pop && git commit -m x", "GIT_INDEX_FILE=/tmp/x git commit -m x",
 ]
 
@@ -299,6 +313,10 @@ ACCEPTED = [
     "git commit -c HEAD --amend", "git commit --author='Ada <a@b.c>' -m x",
     "git commit -m x --no-verify", "git commit --cleanup strip -m x", "git commit -S -m x",
     "git commit -n -m x", "git status && git commit -m x",
+    'git commit -m "$(cat <<\'EOF\'\nfeat: thing\n\nRun git add first, then git commit -am is not allowed.\nEOF\n)"',
+    'git commit -m "$(cat <<\'EOF\'\nfix: handle case 1) and 2)\n\nBody.\nEOF\n)"',
+    'git commit -m "$(cat <<\'EOF\'\nfix: don\'t break -p parsing\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)"',
+    "git commit -m x -m 'see #12'", "git commit -m x --untracked-files=no", "git commit --amend -C HEAD",
 ]
 
 
@@ -373,3 +391,131 @@ def test_subprocess_bad_input_allows(tmp_path):
     empty.mkdir()
     result = subprocess.run([sys.executable, str(HOOK)], input="not json", capture_output=True, text=True)
     assert result.returncode == 0
+
+
+# ---- fix round 1 -----------------------------------------------------------------
+
+def test_merge_pull_am_refused_when_gated(gated, capsys):
+    for cmd in ("git merge other", "git pull", "git am x.patch", "git merge --no-ff other",
+                "git pull --rebase"):
+        code, err = run(cmd, gated, never_scan, capsys=capsys)
+        assert code == 2 and "--no-commit" in err and "git commit" in err, (cmd, err)
+
+
+def test_merge_pull_allowed_in_safe_forms_and_when_not_gated(gated, tmp_path, capsys):
+    for cmd in ("git merge --no-commit other", "git pull --no-rebase --no-commit",
+                "git merge --squash other", "git merge --ff-only other"):
+        assert run(cmd, gated, lambda r: [], capsys=capsys)[0] == 0, cmd
+    plain = make_repo(tmp_path / "plain", {"b.py": "y\n"})
+    assert run("git merge other", plain, never_scan, lambda n: None, capsys)[0] == 0
+
+
+def test_history_recommitting_commands_stay_allowed(gated, capsys):
+    for cmd in ("git cherry-pick abc", "git revert HEAD --no-edit", "git rebase -i HEAD~1",
+                "git commit-tree HEAD^{tree} -p HEAD -m x | xargs git update-ref HEAD"):
+        assert run(cmd, gated, never_scan, lambda n: None, capsys)[0] == 0, cmd
+
+
+def test_lex_failure_in_gated_repo_refuses(gated, capsys):
+    code, err = run("git commit -m 'unterminated -a", gated, never_scan, capsys=capsys)
+    assert code == 2 and "simplify" in err.lower()
+
+
+def test_variable_target_resolved_from_assignment(tmp_path, capsys):
+    repo = make_repo(tmp_path / "repo", {"a.py": "x = 1\n"}, gated=True)
+    stage(repo, "a.py")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    code, err = run(f"D={repo}; cd $D && git commit -m x", elsewhere, lambda r: [finding()], capsys=capsys)
+    assert code == 2 and "[high]" in err
+    code, err = run(f'D={repo}; git -C "${{D}}" commit -m x', elsewhere, lambda r: [finding()], capsys=capsys)
+    assert code == 2 and "[high]" in err
+
+
+def test_home_and_tilde_expand(tmp_path, monkeypatch, capsys):
+    repo = make_repo(tmp_path / "home" / "repo", {"a.py": "x = 1\n"}, gated=True)
+    stage(repo, "a.py")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for cmd in ("cd ~/repo && git commit -m x", "cd $HOME/repo && git commit -m x",
+                'cd "${HOME}/repo" && git commit -m x'):
+        code, err = run(cmd, tmp_path, lambda r: [finding()], capsys=capsys)
+        assert code == 2 and "[high]" in err, (cmd, err)
+
+
+@pytest.mark.parametrize("command", [
+    'cd "$REPO" && git commit -m x', "cd $(git rev-parse --show-toplevel) && git commit -m x",
+    "cd `pwd` && git commit -m x", 'git -C "$REPO" commit -m x', "cd - && git commit -m x",
+])
+def test_unresolvable_target_refused(command, tmp_path, capsys):
+    plain = make_repo(tmp_path / "plain", {"b.py": "y\n"})
+    code, err = run(command, plain, never_scan, lambda n: None, capsys)
+    assert code == 2 and "literal path" in err
+
+
+def test_scan_timeout_fails_closed(gated, capsys):
+    def slow(_repo):
+        raise subprocess.TimeoutExpired(["semgrep"], 1)
+
+    code, err = run("git commit -m x", gated, slow, capsys=capsys)
+    assert code == 2 and "security gate error: TimeoutExpired" in err
+
+
+def test_fast_scan_passes_deadline_and_tags_tool(tmp_path):
+    import scan
+
+    repo = make_repo(tmp_path / "repo", {"a.py": "x = 1\n"})
+    stage(repo, "a.py")
+    seen = {}
+
+    def run_(argv, **kw):
+        if argv[0] == "git":
+            return subprocess.run(argv, **kw)
+        seen["argv"] = argv
+        seen["timeout"] = kw.get("timeout")
+        raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+
+    with pytest.raises(subprocess.TimeoutExpired) as info:
+        scan.fast_scan(repo, run=run_, timeout=50)
+    assert info.value.tool == "semgrep"
+    assert 0 < seen["timeout"] <= 50
+    assert "--timeout" in seen["argv"]
+
+
+def test_fast_scan_without_timeout_adds_none(tmp_path):
+    import scan
+
+    repo = make_repo(tmp_path / "repo", {"a.py": "x = 1\n"})
+    stage(repo, "a.py")
+    seen = []
+
+    def run_(argv, **kw):
+        if argv[0] == "git":
+            return subprocess.run(argv, **kw)
+        seen.append(kw)
+        raise subprocess.CalledProcessError(2, argv)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        scan.fast_scan(repo, run=run_)
+    assert "timeout" not in seen[0]
+
+
+def test_default_scan_uses_internal_deadline():
+    assert 60 <= security_gate.GATE_DEADLINE <= 110
+
+
+def test_payload_garbage_with_commit_fails_closed(capsys):
+    payload = {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}, "cwd": 5}
+    assert security_gate.main(payload, never_scan, lambda n: None) == 2
+    assert "security gate error" in capsys.readouterr().err
+    payload["tool_input"]["command"] = "ls"
+    assert security_gate.main(payload, never_scan, lambda n: None) == 0
+    assert security_gate.main({"tool_name": "Bash", "tool_input": 5}, never_scan, lambda n: None) == 0
+
+
+def test_lexer_skips_quoted_heredoc_bodies_only():
+    from shelltext import lex
+
+    words = [v for k, v in lex("cat <<'EOF'\ngit add x)\nEOF\necho after")]
+    assert "add" not in words and "after" in words
+    words = [v for k, v in lex("cat <<EOF\n$(git add x)\nEOF\n")]
+    assert any("git add" in w for w in words)

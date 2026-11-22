@@ -9,6 +9,46 @@ used to find `git` invocations.
 from __future__ import annotations
 
 OPERATOR_CHARS = ";&|<>"
+_DELIM_END = " \t\n;&|<>()"
+
+
+def heredoc_start(text: str, i: int) -> tuple[str, bool, int] | None:
+    """A heredoc with a QUOTED delimiter starts at text[i]: (delimiter, tab-stripped, index just
+    past the `<<'EOF'` text). Quoted bodies are never expanded, so they are data, not commands.
+    Unquoted heredocs return None: their `$(...)` bodies run."""
+    if not text.startswith("<<", i) or text.startswith("<<<", i):
+        return None
+    n = len(text)
+    j = i + 2
+    tabs = j < n and text[j] == "-"
+    if tabs:
+        j += 1
+    while j < n and text[j] in " \t":
+        j += 1
+    if j >= n:
+        return None
+    if text[j] in "'\"":
+        end = text.find(text[j], j + 1)
+        return (text[j + 1:end], tabs, end + 1) if end > 0 else None
+    if text[j] == "\\":
+        k = j + 1
+        while k < n and text[k] not in _DELIM_END:
+            k += 1
+        return (text[j + 1:k], tabs, k) if k > j + 1 else None
+    return None
+
+
+def heredoc_skip(text: str, pos: int, pending: list[tuple[str, bool]]) -> int:
+    """Index after the bodies of the pending heredocs; `pos` is the start of the first body line."""
+    n = len(text)
+    for delim, tabs in pending:
+        while pos < n:
+            nl = text.find("\n", pos)
+            line = text[pos:] if nl < 0 else text[pos:nl]
+            pos = n if nl < 0 else nl + 1
+            if (line.lstrip("\t") if tabs else line) == delim:
+                break
+    return pos
 
 
 def unify_newlines(text: str) -> str:
@@ -30,9 +70,18 @@ def substitutions(text: str) -> list[str]:
     out: list[str] = []
     stack: list[int] = []  # body start for $( ; -1 for a plain "(" group
     tick = -1
+    pending: list[tuple[str, bool]] = []
     i, n = 0, len(text)
     while i < n:
         c = text[i]
+        if c == "<" and (hd := heredoc_start(text, i)):
+            pending.append(hd[:2])
+            i = hd[2]
+            continue
+        if c == "\n" and pending:
+            i = heredoc_skip(text, i + 1, pending)
+            pending = []
+            continue
         if c == "$" and text.startswith("$(", i):
             stack.append(i + 2)
             i += 2
@@ -81,10 +130,19 @@ def _skip_group(text: str, i: int, open_c: str, close_c: str) -> int:
     """Index just past the group opened at text[i-1]; nesting counted."""
     depth = 1
     n = len(text)
+    pending: list[tuple[str, bool]] = []
     while i < n:
         c = text[i]
         if c == "\\":
             i += 2
+            continue
+        if c == "<" and (hd := heredoc_start(text, i)):
+            pending.append(hd[:2])
+            i = hd[2]
+            continue
+        if c == "\n" and pending:
+            i = heredoc_skip(text, i + 1, pending)
+            pending = []
             continue
         if c == open_c:
             depth += 1
@@ -96,7 +154,7 @@ def _skip_group(text: str, i: int, open_c: str, close_c: str) -> int:
     raise LexError("unbalanced group")
 
 
-def lex(text: str) -> list[tuple[str, str]]:
+def lex(text: str, skip_heredocs: bool = True) -> list[tuple[str, str]]:
     """Split a command into ("word", value) and ("op", value) items.
 
     Quotes and backslashes are resolved. A `$(...)` or backtick span stays inside
@@ -105,6 +163,7 @@ def lex(text: str) -> list[tuple[str, str]]:
     items: list[tuple[str, str]] = []
     cur: list[str] = []
     has = False
+    pending: list[tuple[str, bool]] = []
     i, n = 0, len(text)
 
     def flush() -> None:
@@ -120,6 +179,14 @@ def lex(text: str) -> list[tuple[str, str]]:
         elif c == "\n":
             flush()
             items.append(("op", ";"))
+            if pending:
+                i = heredoc_skip(text, i + 1, pending) - 1
+                pending = []
+        elif skip_heredocs and c == "<" and (hd := heredoc_start(text, i)):
+            flush()
+            pending.append(hd[:2])
+            items.append(("op", "<<heredoc"))
+            i = hd[2] - 1
         elif c == "\\":
             if i + 1 < n and text[i + 1] != "\n":
                 cur.append(text[i + 1])
