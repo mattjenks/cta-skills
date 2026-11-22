@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 from datetime import date, datetime
 
 import pytest
@@ -112,3 +113,111 @@ def test_live_snapshot_trims_partial_trailing_line(dirs):
     make(src / "otel.jsonl", b'{"a":1}\n{"b"', DAY)
     backup(src, dest, DAY)
     assert (dest / "otel-live-2026-03-10.jsonl").read_bytes() == b'{"a":1}\n'
+
+
+@pytest.fixture(autouse=True)
+def not_macos(monkeypatch):
+    """No real notification from any test unless it opts in with a fake runner."""
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Linux")
+
+
+class FakeRun:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, cmd, **kw):
+        self.calls.append((cmd, kw))
+
+
+def test_failure_notifies_on_macos(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setenv("CTA_CONFIG", str(tmp_path / "none.toml"))
+    run = FakeRun()
+    assert backup_mod.main([], run=run) == 1
+    assert len(run.calls) == 1
+    cmd, kw = run.calls[0]
+    assert cmd[:2] == ["osascript", "-e"]
+    assert "CTA telemetry backup failed: backup_dir not configured" in cmd[2]
+    assert kw["stdout"] == subprocess.DEVNULL and kw["stderr"] == subprocess.DEVNULL
+
+
+def test_copy_failure_notifies_with_reason(dirs, monkeypatch):
+    src, dest = dirs
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: dest)
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+
+    def boom(*a, **kw):
+        raise backup_mod.BackupError("checksum mismatch copying x")
+
+    monkeypatch.setattr(backup_mod, "backup", boom)
+    run = FakeRun()
+    assert backup_mod.main(["--day", "2026-03-10"], run=run) == 1
+    assert "CTA telemetry backup failed: checksum mismatch copying x" in run.calls[0][0][2]
+
+
+def test_failure_off_macos_does_not_notify(monkeypatch, tmp_path):
+    monkeypatch.setenv("CTA_CONFIG", str(tmp_path / "none.toml"))
+    run = FakeRun()
+    assert backup_mod.main([], run=run) == 1
+    assert run.calls == []
+
+
+def test_success_does_not_notify(dirs, monkeypatch):
+    src, dest = dirs
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: dest)
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+    run = FakeRun()
+    assert backup_mod.main(["--day", "2026-03-10"], run=run) == 0
+    assert run.calls == []
+
+
+def test_config_notes_go_to_stderr(monkeypatch, tmp_path, capsys):
+    bad = tmp_path / "config.toml"
+    bad.write_text("this is = = not toml\n", encoding="utf-8")
+    monkeypatch.setenv("CTA_CONFIG", str(bad))
+    assert backup_mod.main([], run=FakeRun()) == 1
+    err = capsys.readouterr().err
+    assert "config unreadable" in err
+    assert "backup_dir not configured" in err
+
+
+def test_prunes_live_snapshots_keeping_newest_seven(dirs):
+    src, dest = dirs
+    dest.mkdir()
+    for d in range(1, 10):  # 2026-03-01 .. 2026-03-09
+        (dest / f"otel-live-2026-03-{d:02d}.jsonl").write_bytes(b"x\n")
+    rotated = dest / "otel-20260301T010000.jsonl"
+    rotated.write_bytes(b"rotated\n")
+    other = dest / "notes.txt"
+    other.write_bytes(b"keep\n")
+    make(src / "otel.jsonl", b"live\n", DAY)
+    backup(src, dest, DAY)
+    lives = sorted(p.name for p in dest.glob("otel-live-*.jsonl"))
+    assert lives == [f"otel-live-2026-03-{d:02d}.jsonl" for d in range(4, 11)]
+    assert rotated.exists() and other.exists()
+
+
+def test_failed_run_does_not_prune(dirs, monkeypatch):
+    src, dest = dirs
+    dest.mkdir()
+    for d in range(1, 10):
+        (dest / f"otel-live-2026-03-{d:02d}.jsonl").write_bytes(b"x\n")
+    make(src / "otel.jsonl", b"live\n", DAY)
+    monkeypatch.setattr(backup_mod.shutil, "copy2", lambda s, d, **kw: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(OSError):
+        backup(src, dest, DAY)
+    assert len(list(dest.glob("otel-live-*.jsonl"))) == 9
+
+
+def test_unexpected_error_notifies(monkeypatch):
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+
+    def broken():
+        raise RuntimeError("config loader exploded")
+
+    monkeypatch.setattr(backup_mod, "configured_dest", broken)
+    run = FakeRun()
+    assert backup_mod.main([], run=run) == 1
+    assert "CTA telemetry backup failed: RuntimeError: config loader exploded" in run.calls[0][0][2]
