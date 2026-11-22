@@ -25,19 +25,41 @@ class BackupError(Exception):
     pass
 
 
-def sha256(path: Path) -> str:
+def sha256(path: Path, limit: int | None = None) -> str:
+    """SHA-256 of the file, or of its first `limit` bytes."""
     h = hashlib.sha256()
+    remaining = limit
     with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
+        while remaining is None or remaining > 0:
+            chunk = fh.read(1 << 20 if remaining is None else min(1 << 20, remaining))
+            if not chunk:
+                break
             h.update(chunk)
+            if remaining is not None:
+                remaining -= len(chunk)
     return h.hexdigest()
 
 
-def _copy_verified(src: Path, target: Path) -> None:
+def _trim_partial_line(path: Path) -> None:
+    """Truncate after the last newline so the file holds whole JSONL lines only."""
+    data = path.read_bytes()
+    keep = data.rfind(b"\n") + 1
+    if keep != len(data):
+        with open(path, "r+b") as fh:
+            fh.truncate(keep)
+
+
+def _copy_verified(src: Path, target: Path, growing: bool = False) -> None:
+    """Copy via a temp file, verify, rename. `growing` tolerates appends to src (live file)."""
     tmp = target.with_name(f".{target.name}.tmp")
     try:
         shutil.copy2(src, tmp)
-        if tmp.stat().st_size != src.stat().st_size or sha256(tmp) != sha256(src):
+        if growing:
+            n = tmp.stat().st_size
+            if src.stat().st_size < n or sha256(tmp) != sha256(src, limit=n):
+                raise BackupError(f"checksum mismatch copying {src.name}")
+            _trim_partial_line(tmp)
+        elif tmp.stat().st_size != src.stat().st_size or sha256(tmp) != sha256(src):
             raise BackupError(f"checksum mismatch copying {src.name}")
         os.replace(tmp, target)
     finally:
@@ -61,7 +83,7 @@ def backup(src: Path, dest: Path, day: date) -> int:
     live = src / "otel.jsonl"
     if live.is_file() and live.stat().st_size > 0:
         dest.mkdir(parents=True, exist_ok=True)
-        _copy_verified(live, dest / f"otel-live-{day.isoformat()}.jsonl")
+        _copy_verified(live, dest / f"otel-live-{day.isoformat()}.jsonl", growing=True)
         copied += 1
     return copied
 

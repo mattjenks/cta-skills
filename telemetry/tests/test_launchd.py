@@ -26,7 +26,8 @@ def test_plists():
         assert p["StandardOutPath"] == f"__HOME__/.local/share/cta/logs/{label}.log"
         assert p["StandardErrorPath"] == p["StandardOutPath"]
         args = p["ProgramArguments"]
-        assert args == ["uv", "run", "--script", f"__REPO__/telemetry/{script}", *extra]
+        assert args[:2] == ["/usr/bin/env", "uv"]
+        assert args[1:] == ["uv", "run", "--script", f"__REPO__/telemetry/{script}", *extra]
         if interval is None:
             assert p["RunAtLoad"] is True
             assert "StartCalendarInterval" not in p

@@ -72,14 +72,14 @@ def test_checksum_mismatch_raises(dirs, monkeypatch):
 
 def test_live_snapshot_dated_and_replaced(dirs):
     src, dest = dirs
-    live = make(src / "otel.jsonl", b"v1", DAY)
+    live = make(src / "otel.jsonl", b"v1\n", DAY)
     assert backup(src, dest, DAY) == 1
     snap = dest / "otel-live-2026-03-10.jsonl"
-    assert snap.read_bytes() == b"v1"
-    live.write_bytes(b"v2-longer")
+    assert snap.read_bytes() == b"v1\n"
+    live.write_bytes(b"v2-longer\n")
     assert backup(src, dest, DAY) == 1  # same day re-run replaces the snapshot
-    assert snap.read_bytes() == b"v2-longer"
-    assert live.read_bytes() == b"v2-longer"  # source untouched
+    assert snap.read_bytes() == b"v2-longer\n"
+    assert live.read_bytes() == b"v2-longer\n"  # source untouched
     assert backup(src, dest, date(2026, 3, 11)) == 1
     assert (dest / "otel-live-2026-03-11.jsonl").exists() and snap.exists()
 
@@ -88,3 +88,27 @@ def test_cli_without_backup_dir_exits_1(monkeypatch, capsys, tmp_path):
     monkeypatch.setenv("CTA_CONFIG", str(tmp_path / "none.toml"))
     assert backup_mod.main([]) == 1
     assert "backup_dir not configured" in capsys.readouterr().err
+
+
+def test_live_snapshot_tolerates_append_during_copy(dirs, monkeypatch):
+    src, dest = dirs
+    live = make(src / "otel.jsonl", b'{"a":1}\n{"b":2}\n', DAY)
+    real = shutil.copy2
+
+    def copy_then_append(s, d, **kw):
+        real(s, d, **kw)
+        with open(s, "ab") as fh:  # collector keeps writing, mid-line
+            fh.write(b'{"c":3}\n{"d":')
+
+    monkeypatch.setattr(backup_mod.shutil, "copy2", copy_then_append)
+    assert backup(src, dest, DAY) == 1
+    snap = (dest / "otel-live-2026-03-10.jsonl").read_bytes()
+    assert snap == b'{"a":1}\n{"b":2}\n'
+    assert live.read_bytes().endswith(b'{"d":')
+
+
+def test_live_snapshot_trims_partial_trailing_line(dirs):
+    src, dest = dirs
+    make(src / "otel.jsonl", b'{"a":1}\n{"b"', DAY)
+    backup(src, dest, DAY)
+    assert (dest / "otel-live-2026-03-10.jsonl").read_bytes() == b'{"a":1}\n'

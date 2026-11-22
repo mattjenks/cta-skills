@@ -6,6 +6,7 @@
   <string>net.cta.telemetry-backup</string>
   <key>ProgramArguments</key>
   <array>
+    <string>/usr/bin/env</string>
     <string>uv</string>
     <string>run</string>
     <string>--script</string>
