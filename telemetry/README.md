@@ -14,6 +14,33 @@ uv run telemetry/smoke_test.py                      # exit 0 if a log, a metric 
 
 If the stack is down, Claude Code behaves normally; it just exports nothing.
 
+## Enable Claude Code telemetry export
+
+Claude Code exports nothing until telemetry is turned on. Add these keys under `"env"` in
+`~/.claude/settings.json` (merge with any `env` block already there), then start a new session:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_TRACES_EXPORTER": "otlp",
+    "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+    "OTEL_LOG_TOOL_DETAILS": "1",
+    "OTEL_LOG_USER_PROMPTS": "1",
+    "OTEL_METRICS_INCLUDE_VERSION": "true"
+  }
+}
+```
+
+**Privacy:** `OTEL_LOG_USER_PROMPTS=1` records the text of your prompts. It stays on this machine,
+but it is kept in Loki for 90 days and in the archive and its backups indefinitely. It is optional:
+drop the key to log prompt lengths only. Without `OTEL_LOG_TOOL_DETAILS=1`, skill names from
+third-party plugins are anonymized, so the dashboard cannot tell those skills apart.
+
 ## Ports (all bound to 127.0.0.1 only)
 
 | Port | Service |
@@ -42,7 +69,7 @@ Under `~/.local/share/cta/telemetry/` (override with `CTA_DATA`): `archive/`, `p
 |---|---|
 | Loki | 90 days (`retention_period: 2160h`, compactor retention on) |
 | Prometheus | 400 days |
-| Archive | collector `file` exporter writes `archive/otel.jsonl` (JSON, uncompressed), rotating at 100 MB; rotated files get timestamped names and are pruned after 3 days (`max_days`). Task 10's backup copies them off by mtime date. |
+| Archive | collector `file` exporter writes `archive/otel.jsonl` (JSON, uncompressed), rotating at 100 MB; rotated files get timestamped names and are pruned after 3 days (`max_days`). The nightly backup copies them off by mtime date. |
 
 Metrics reach Prometheus with dotted names underscored and the unit appended, e.g.
 `claude_code_cost_usage_USD_total`, `claude_code_token_usage_tokens_total` (label `skill_name`).
@@ -102,8 +129,11 @@ Logs: `~/.local/share/cta/logs/<label>.log`.
 archive files dated on or before the day that are not yet at the destination, plus a snapshot of the
 live file as `otel-live-<YYYY-MM-DD>.jsonl` (replaced on a same-day re-run). Each copy goes to a temp
 file, is verified by size and SHA-256, then renamed, so a failed copy leaves no partial file. The
-source is never modified. With nothing to copy it logs "nothing to back up" and exits 0; with
-`backup_dir` unset it exits 1.
+source is never modified. After a successful run only the 7 newest `otel-live-*.jsonl` snapshots
+are kept at the destination; rotated copies are never pruned. With nothing to copy it logs
+"nothing to back up" and exits 0. With `backup_dir` unset, a copy failure or any other error it
+exits 1, prints the cause (including any problem reading `config.toml`) to stderr, and raises a
+macOS notification "CTA telemetry backup failed: <reason>".
 
 **Restore:** the files are plain JSONL (OTLP JSON from the collector's file exporter). Copy the
 needed `otel-*.jsonl` / `otel-live-*.jsonl` files from the backup folder back into

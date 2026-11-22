@@ -15,17 +15,50 @@ The assistant's voice is a swappable persona. The bundled one is `default` ("CTA
 
 Skills are invoked as `/core:<skill>`.
 
+## Requirements
+
+- **macOS.** Desktop notifications (`osascript`), the scheduled jobs (launchd) and the telemetry
+  stack (Docker via Colima or Docker Desktop) are macOS-only. Off macOS the hooks still run, but
+  notifications are skipped.
+- **[uv](https://docs.astral.sh/uv/) on your `PATH`.** Every hook runs as `uv run --script`.
+  Without uv the hooks fail to start, and **the secrets guard is OFF**: nothing blocks reads of
+  secret files or environment dumps.
+- **Claude Code** with plugin marketplaces (`/plugin`) and the `SessionStart`, `PreToolUse`,
+  `UserPromptSubmit`, `Stop` and `Notification` hook events. The telemetry stack needs Claude
+  Code's OpenTelemetry export; its enhanced (skill-level) telemetry is a beta flag and may change
+  between releases.
+
 ## Configuration
 
-Personal settings live outside this repository, in `~/.config/cta/config.toml`:
+Personal settings live outside this repository, in `~/.config/cta/config.toml` (the
+`CTA_CONFIG` environment variable points elsewhere). Paths are used as given, with `~` expanded;
+they are not resolved against `kb` or any other folder.
 
 ```toml
-persona = "default"            # which persona to load
-context = ["USER.md"]          # files injected at session start, in order
-kb = "~/path/to/knowledge-base" # where context files and personas are resolved
+persona = "~/notes/personas/me.md"    # persona file; omit for the bundled default ("CTA")
+context = ["~/notes/BOUNDARIES.md"]   # files injected at session start, in order
+kb = "~/notes"                        # reserved for later knowledge-base features; unused today
+
+[notify]
+min_turn_seconds = 300                # notify only for turns at least this long; 0 = every turn
+
+[telemetry]
+backup_dir = "~/Backups/cta-telemetry" # where the nightly telemetry backup copies the archive
 ```
 
-If the file is missing or unreadable, CTA starts with the default persona.
+| Key | Default | Meaning |
+|---|---|---|
+| `persona` | bundled `default` | Persona file injected at session start. If it is missing, CTA prints `[cta] missing: <path>` and uses the bundled default. |
+| `context` | `[]` | Files injected after the persona, in order. A missing one is reported as `[cta] missing: <path>`. |
+| `kb` | unset | Reserved for later knowledge-base features. |
+| `[notify] min_turn_seconds` | `300` | Minimum turn length before a desktop notification; `0` notifies on every turn. |
+| `[telemetry] backup_dir` | unset | Destination of the nightly telemetry backup; the backup exits 1 while it is unset. |
+
+If the file is missing or unreadable, CTA starts with the default persona and a one-line note.
+
+The local telemetry stack (OpenTelemetry Collector, Prometheus, Loki, Tempo, Grafana), its nightly
+backup and how to turn on Claude Code's telemetry export are in
+[`telemetry/README.md`](telemetry/README.md).
 
 ## Contributing / releases
 
