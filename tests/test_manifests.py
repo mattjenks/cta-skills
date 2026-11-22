@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -65,3 +66,53 @@ def test_no_personal_data():
             continue
         hits += [f"{rel}: {term}" for term in FORBIDDEN if term in text]
     assert not hits, hits
+
+
+PLUGIN_DIR = ROOT / "plugins" / "core"
+HOOKS_JSON = PLUGIN_DIR / "hooks" / "hooks.json"
+
+
+def _hook_entries():
+    data = json.loads(HOOKS_JSON.read_text())
+    for event, groups in data["hooks"].items():
+        for group in groups:
+            for hook in group["hooks"]:
+                yield event, group, hook
+
+
+def _script_path(command):
+    match = re.search(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"', command)
+    assert match, command
+    return PLUGIN_DIR / match.group(1)
+
+
+def test_hooks_json_commands_exist():
+    entries = list(_hook_entries())
+    assert {e for e, _, _ in entries} == {"SessionStart", "PreToolUse", "Stop", "Notification"}
+    for _, _, hook in entries:
+        path = _script_path(hook["command"])
+        assert path.is_file(), path
+        assert os.access(path, os.X_OK), f"not executable: {path}"
+
+
+def test_no_bare_python_in_hooks():
+    for _, _, hook in _hook_entries():
+        assert not hook["command"].startswith("python"), hook["command"]
+        assert hook["command"].startswith("uv run --script "), hook["command"]
+
+
+def _run_wired_guard(tool_name, tool_input):
+    command = next(
+        h["command"] for e, _, h in _hook_entries() if e == "PreToolUse"
+    ).replace("${CLAUDE_PLUGIN_ROOT}", str(PLUGIN_DIR))
+    return subprocess.run(
+        command, shell=True, capture_output=True, text=True,
+        input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}),
+    )
+
+
+def test_wired_secrets_guard_blocks():
+    blocked = _run_wired_guard("Read", {"file_path": str(ROOT / ".env")})
+    assert blocked.returncode == 2, blocked.stderr
+    allowed = _run_wired_guard("Read", {"file_path": str(ROOT / "README.md")})
+    assert allowed.returncode == 0, allowed.stderr
