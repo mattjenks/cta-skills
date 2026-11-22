@@ -1,0 +1,4 @@
+global:
+  scrape_interval: 30s
+# Metrics arrive via remote write from the collector (--web.enable-remote-write-receiver).
+scrape_configs: []

@@ -1,0 +1,73 @@
+# CTA telemetry stack. Local only: every published port binds to 127.0.0.1.
+# Data lives under ${CTA_DATA:-${HOME}/.local/share/cta/telemetry}.
+name: cta-telemetry
+
+services:
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    command: ["--config=/etc/otelcol.yaml"]
+    user: "0"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    volumes:
+      - ./otelcol.yaml:/etc/otelcol.yaml:ro
+      - ${CTA_DATA:-${HOME}/.local/share/cta/telemetry}/archive:/archive
+    depends_on: [prometheus, loki, tempo]
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    user: "0"
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=400d
+      - --web.enable-remote-write-receiver
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ${CTA_DATA:-${HOME}/.local/share/cta/telemetry}/prometheus:/prometheus
+
+  loki:
+    image: grafana/loki:3.3.2
+    user: "0"
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./loki.yaml:/etc/loki/loki.yaml:ro
+      - ${CTA_DATA:-${HOME}/.local/share/cta/telemetry}/loki:/loki
+
+  tempo:
+    image: grafana/tempo:2.7.0
+    user: "0"
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "127.0.0.1:3200:3200"
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - ${CTA_DATA:-${HOME}/.local/share/cta/telemetry}/tempo:/var/tempo
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    user: "0"
+    restart: unless-stopped
+    environment:
+      # Local-only default; override with CTA_GRAFANA_ADMIN_PASSWORD.
+      GF_SECURITY_ADMIN_PASSWORD: ${CTA_GRAFANA_ADMIN_PASSWORD:-cta-local-only}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - ${CTA_DATA:-${HOME}/.local/share/cta/telemetry}/grafana:/var/lib/grafana
+    depends_on: [prometheus, loki, tempo]

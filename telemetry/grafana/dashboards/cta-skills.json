@@ -1,0 +1,435 @@
+{
+  "uid": "cta-skills",
+  "title": "CTA Skills",
+  "tags": [
+    "cta"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Skill invocations by skill and trigger",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "sum by (skill_name, invocation_trigger) (count_over_time({service_name=\"claude-code\"} | event_name=\"claude_code.skill_activated\" | skill_name=~\"$skill\" [$__auto]))",
+          "legendFormat": "{{skill_name}} / {{invocation_trigger}}",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Invocations in range (red = zero)",
+      "type": "stat",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | event_name=\"claude_code.skill_activated\" | skill_name=\"$installed\" [$__range])) or vector(0)",
+          "legendFormat": "$installed",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 8,
+        "h": 4
+      },
+      "repeat": "installed",
+      "repeatDirection": "h",
+      "maxPerRow": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "displayName": "$installed",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Tool duration p50 / p95 (ms)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "quantile_over_time(0.5, {service_name=\"claude-code\"} | event_name=\"claude_code.tool_result\" | unwrap duration_ms [$__auto]) by (tool_name)",
+          "legendFormat": "p50 {{tool_name}}",
+          "refId": "A",
+          "queryType": "range"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "quantile_over_time(0.95, {service_name=\"claude-code\"} | event_name=\"claude_code.tool_result\" | unwrap duration_ms [$__auto]) by (tool_name)",
+          "legendFormat": "p95 {{tool_name}}",
+          "refId": "B",
+          "queryType": "range"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Tool failures",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"claude_code.tool_result\" | success=\"false\" [$__auto]))",
+          "legendFormat": "{{tool_name}}",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Cost by skill (USD, range)",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cta-prom"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cta-prom"
+          },
+          "expr": "sum by (skill_name) (increase(claude_code_cost_usage_USD_total{skill_name=~\"$skill\"}[$__range]))",
+          "legendFormat": "{{skill_name}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "title": "Tokens by skill and type (range)",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cta-prom"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cta-prom"
+          },
+          "expr": "sum by (skill_name, type) (increase(claude_code_token_usage_tokens_total{skill_name=~\"$skill\"}[$__range]))",
+          "legendFormat": "{{skill_name}} / {{type}}",
+          "refId": "A",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "title": "Skill outcomes (cta.skill_episode)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "sum by (skill, outcome) (count_over_time({service_name=\"claude-code\"} | event_name=\"cta.skill_episode\" | skill=~\"$skill\" [$__auto]))",
+          "legendFormat": "{{skill}} / {{outcome}}",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 8,
+      "title": "Drift signals (episodes with signals)",
+      "type": "logs",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "{service_name=\"claude-code\"} | event_name=\"cta.skill_episode\" | signals!=\"\" | signals!=\"none\" | skill=~\"$skill\"",
+          "legendFormat": "",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 28,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 9,
+      "title": "Sessions per day",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "count(sum by (session_id) (count_over_time({service_name=\"claude-code\"} | event_name=\"claude_code.user_prompt\" [1d])))",
+          "legendFormat": "sessions",
+          "refId": "A",
+          "queryType": "range",
+          "interval": "1d"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "skill",
+        "label": "Skill",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "cta-prom"
+        },
+        "query": {
+          "query": "label_values(claude_code_cost_usage_USD_total, skill_name)",
+          "refId": "v"
+        },
+        "refresh": 2,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "installed",
+        "label": "Installed skills",
+        "type": "custom",
+        "query": "create-skill,create-hook,config-audit",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "options": []
+      }
+    ]
+  }
+}
