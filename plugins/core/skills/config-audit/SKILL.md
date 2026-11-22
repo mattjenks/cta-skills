@@ -74,14 +74,15 @@ config" in general, add `--user` to include `~/.claude`, `~/.claude.json`, `~/.c
 ## Step 2: run the scanner
 
 ```bash
-python <skill>/scripts/agent_config_audit.py <repo> --history-for <repo>     # one repo
-python <skill>/scripts/agent_config_audit.py <code folder> --user --history  # the machine
+uv run --python 3.12 python "${CLAUDE_PLUGIN_ROOT}/skills/config-audit/scripts/agent_config_audit.py" <repo> --history-for <repo>     # one repo
+uv run --python 3.12 python "${CLAUDE_PLUGIN_ROOT}/skills/config-audit/scripts/agent_config_audit.py" <code folder> --user --history  # the machine
 ```
 
 Add `--json` for structured output.
 
-Stdlib only, strictly read-only, tested on Python 3.12 (3.11+ is needed to parse
-Codex TOML; older versions report that file as unparsed). Read its
+Requires `uv`, which supplies Python 3.12; do not use a bare `python` or `python3`, since
+older system interpreters cannot parse Codex TOML and report that file as unparsed. Stdlib
+only, strictly read-only. Read its
 output, never its source. It lists every entry that can run or grant something, then
 dependencies, extensions and history hits, marks suspicious ones with `!!`, and ends with
 counts. A large folder takes a while; a single repo takes seconds. The history scan reads
