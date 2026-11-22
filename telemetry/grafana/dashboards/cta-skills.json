@@ -5,7 +5,7 @@
     "cta"
   ],
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "editable": false,
   "time": {
     "from": "now-7d",
@@ -27,7 +27,7 @@
             "type": "loki",
             "uid": "cta-loki"
           },
-          "expr": "sum by (skill_name, invocation_trigger) (count_over_time({service_name=\"claude-code\"} | event_name=\"claude_code.skill_activated\" | skill_name=~\"$skill\" [$__auto]))",
+          "expr": "sum by (skill_name, invocation_trigger) (count_over_time({service_name=\"claude-code\"} | event_name=\"skill_activated\" | skill_name=~\"$skill\" [$__auto]))",
           "legendFormat": "{{skill_name}} / {{invocation_trigger}}",
           "refId": "A",
           "queryType": "range"
@@ -66,7 +66,7 @@
             "type": "loki",
             "uid": "cta-loki"
           },
-          "expr": "sum(count_over_time({service_name=\"claude-code\"} | event_name=\"claude_code.skill_activated\" | skill_name=\"$installed\" [$__range])) or vector(0)",
+          "expr": "sum(count_over_time({service_name=\"claude-code\"} | event_name=\"skill_activated\" | skill_name=\"$installed\" [$__range])) or vector(0)",
           "legendFormat": "$installed",
           "refId": "A",
           "queryType": "instant"
@@ -126,7 +126,7 @@
             "type": "loki",
             "uid": "cta-loki"
           },
-          "expr": "quantile_over_time(0.5, {service_name=\"claude-code\"} | event_name=\"claude_code.tool_result\" | unwrap duration_ms [$__auto]) by (tool_name)",
+          "expr": "quantile_over_time(0.5, {service_name=\"claude-code\"} | event_name=\"tool_result\" | unwrap duration_ms [$__auto]) by (tool_name)",
           "legendFormat": "p50 {{tool_name}}",
           "refId": "A",
           "queryType": "range"
@@ -136,7 +136,7 @@
             "type": "loki",
             "uid": "cta-loki"
           },
-          "expr": "quantile_over_time(0.95, {service_name=\"claude-code\"} | event_name=\"claude_code.tool_result\" | unwrap duration_ms [$__auto]) by (tool_name)",
+          "expr": "quantile_over_time(0.95, {service_name=\"claude-code\"} | event_name=\"tool_result\" | unwrap duration_ms [$__auto]) by (tool_name)",
           "legendFormat": "p95 {{tool_name}}",
           "refId": "B",
           "queryType": "range"
@@ -159,6 +159,58 @@
       }
     },
     {
+      "id": 10,
+      "title": "Skill episode duration p50 / p95 (ms, range)",
+      "type": "bargauge",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "quantile_over_time(0.5, {service_name=\"claude-code\"} | event_name=\"cta.skill_episode\" | skill=~\"$skill\" | unwrap duration_ms [$__range]) by (skill)",
+          "legendFormat": "p50 {{skill}}",
+          "refId": "A",
+          "queryType": "instant"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "quantile_over_time(0.95, {service_name=\"claude-code\"} | event_name=\"cta.skill_episode\" | skill=~\"$skill\" | unwrap duration_ms [$__range]) by (skill)",
+          "legendFormat": "p95 {{skill}}",
+          "refId": "B",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
       "id": 4,
       "title": "Tool failures",
       "type": "timeseries",
@@ -172,15 +224,15 @@
             "type": "loki",
             "uid": "cta-loki"
           },
-          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"claude_code.tool_result\" | success=\"false\" [$__auto]))",
+          "expr": "sum by (tool_name) (count_over_time({service_name=\"claude-code\"} | event_name=\"tool_result\" | success=\"false\" [$__auto]))",
           "legendFormat": "{{tool_name}}",
           "refId": "A",
           "queryType": "range"
         }
       ],
       "gridPos": {
-        "x": 12,
-        "y": 12,
+        "x": 0,
+        "y": 20,
         "w": 12,
         "h": 8
       },
@@ -198,6 +250,49 @@
       }
     },
     {
+      "id": 7,
+      "title": "Outcomes by skill (episodes, range)",
+      "type": "bargauge",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "sum by (skill, outcome) (count_over_time({service_name=\"claude-code\"} | event_name=\"cta.skill_episode\" | skill=~\"$skill\" [$__range]))",
+          "legendFormat": "{{skill}} / {{outcome}}",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 20,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
       "id": 5,
       "title": "Cost by skill (USD, range)",
       "type": "bargauge",
@@ -211,7 +306,7 @@
             "type": "prometheus",
             "uid": "cta-prom"
           },
-          "expr": "sum by (skill_name) (increase(claude_code_cost_usage_USD_total{skill_name=~\"$skill\"}[$__range]))",
+          "expr": "sum by (skill_name) (max_over_time(claude_code_cost_usage_USD_total{skill_name=~\"$skill\"}[$__range]))",
           "legendFormat": "{{skill_name}}",
           "refId": "A",
           "instant": true,
@@ -220,7 +315,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 28,
         "w": 12,
         "h": 8
       },
@@ -238,7 +333,8 @@
           "decimals": 4
         },
         "overrides": []
-      }
+      },
+      "description": "Claude Code exports one cumulative series per session, often with a single sample, so increase() returns nothing; this sums each session's maximum within the range."
     },
     {
       "id": 6,
@@ -254,7 +350,7 @@
             "type": "prometheus",
             "uid": "cta-prom"
           },
-          "expr": "sum by (skill_name, type) (increase(claude_code_token_usage_tokens_total{skill_name=~\"$skill\"}[$__range]))",
+          "expr": "sum by (skill_name, type) (max_over_time(claude_code_token_usage_tokens_total{skill_name=~\"$skill\"}[$__range]))",
           "legendFormat": "{{skill_name}} / {{type}}",
           "refId": "A",
           "instant": true,
@@ -263,7 +359,7 @@
       ],
       "gridPos": {
         "x": 12,
-        "y": 20,
+        "y": 28,
         "w": 12,
         "h": 8
       },
@@ -280,46 +376,8 @@
           "unit": "short"
         },
         "overrides": []
-      }
-    },
-    {
-      "id": 7,
-      "title": "Skill outcomes (cta.skill_episode)",
-      "type": "timeseries",
-      "datasource": {
-        "type": "loki",
-        "uid": "cta-loki"
       },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "cta-loki"
-          },
-          "expr": "sum by (skill, outcome) (count_over_time({service_name=\"claude-code\"} | event_name=\"cta.skill_episode\" | skill=~\"$skill\" [$__auto]))",
-          "legendFormat": "{{skill}} / {{outcome}}",
-          "refId": "A",
-          "queryType": "range"
-        }
-      ],
-      "gridPos": {
-        "x": 0,
-        "y": 28,
-        "w": 12,
-        "h": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 60,
-            "stacking": {
-              "mode": "normal"
-            }
-          }
-        },
-        "overrides": []
-      }
+      "description": "Claude Code exports one cumulative series per session, often with a single sample, so increase() returns nothing; this sums each session's maximum within the range."
     },
     {
       "id": 8,
@@ -342,9 +400,9 @@
         }
       ],
       "gridPos": {
-        "x": 12,
-        "y": 28,
-        "w": 12,
+        "x": 0,
+        "y": 36,
+        "w": 24,
         "h": 8
       },
       "options": {
@@ -367,7 +425,7 @@
             "type": "loki",
             "uid": "cta-loki"
           },
-          "expr": "count(sum by (session_id) (count_over_time({service_name=\"claude-code\"} | event_name=\"claude_code.user_prompt\" [1d])))",
+          "expr": "count(sum by (session_id) (count_over_time({service_name=\"claude-code\"} | event_name=\"user_prompt\" [1d])))",
           "legendFormat": "sessions",
           "refId": "A",
           "queryType": "range",
@@ -376,7 +434,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 44,
         "w": 24,
         "h": 8
       },
@@ -421,7 +479,7 @@
         "name": "installed",
         "label": "Installed skills",
         "type": "custom",
-        "query": "create-skill,create-hook,config-audit",
+        "query": "core:create-skill,core:create-hook,core:config-audit",
         "multi": true,
         "includeAll": true,
         "current": {

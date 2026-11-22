@@ -30,8 +30,8 @@ Open <http://127.0.0.1:3000/d/cta-skills>. Anonymous Viewer access is on (localh
 sign in as `admin`; the password comes from `CTA_GRAFANA_ADMIN_PASSWORD`, defaulting to the
 **local-only** value `cta-local-only`. Set the variable if the machine is shared.
 
-The dashboard's "Installed skills" variable is a fixed list (create-skill, create-hook,
-config-audit); edit it in `grafana/dashboards/cta-skills.json`.
+The dashboard's "Installed skills" variable is a fixed list (`core:create-skill`,
+`core:create-hook`, `core:config-audit`); edit it in `grafana/dashboards/cta-skills.json`.
 
 ## Where data lives
 
@@ -47,7 +47,26 @@ Under `~/.local/share/cta/telemetry/` (override with `CTA_DATA`): `archive/`, `p
 Metrics reach Prometheus with dotted names underscored and the unit appended, e.g.
 `claude_code_cost_usage_USD_total`, `claude_code_token_usage_tokens_total` (label `skill_name`).
 Delta counters from Claude Code are converted to cumulative by the collector.
-Log attributes land in Loki as structured metadata (`event_name`, `skill_name`, ...).
+Log attributes land in Loki as structured metadata (`event_name`, `skill_name`, ...). Claude Code's
+`event_name` values are bare (`skill_activated`, `tool_result`, `user_prompt`, `api_request`; the
+log body carries the `claude_code.` prefix), and `skill_name` is plugin-namespaced
+(`core:create-skill`) in both Loki and Prometheus.
+
+## Drift enrichment
+
+```sh
+uv run telemetry/enrich_drift.py --since 26h    # 30m, 26h, 7d
+```
+
+Reads `~/.claude/projects/**/*.jsonl` (never calls a model), derives one episode per skill
+invocation with an outcome (`success`, `drifted`, `abandoned`) and drift signals, and posts each as
+a `cta.skill_episode` log (`service_name="claude-code"`, attributes `skill`, `skill_short`,
+`outcome`, `signals`, `turns`, `start`, `end`, `duration_ms`). Records are stamped with the run
+time, since Loki rejects entries far behind the newest in a stream; use `start`/`end` for when the
+episode happened. A per-transcript high-water mark in `~/.local/share/cta/state/drift.json`
+advances only after the Collector accepts the POST; with the Collector down it exits 1 and writes
+nothing. Episodes in a transcript still being written wait until they have two follow-up prompts
+or the file has been idle for 5 minutes.
 
 ## Privacy
 
