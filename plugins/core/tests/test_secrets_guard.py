@@ -162,3 +162,28 @@ def test_oversized_command_fails_closed():
 def test_normal_command_with_substitutions_allowed():
     cmd = "echo $(date) $(pwd) `whoami` && ls -la src tests docs"
     assert _timed(cmd) is None
+
+
+def test_nested_rm_filler_with_ruby_bypass_blocks():
+    n = 255
+    cmd = "$(" * n + "rm " * 6000 + ")" * n + "; ruby -e \"$(echo 'puts ENV')\""
+    assert len(cmd) <= 20000
+    assert _timed(cmd) is not None
+
+
+def test_nested_echo_filler_returns_verdict():
+    cmd = "$(" * 250 + "echo $AAAA " * 1500 + ")" * 250
+    assert len(cmd) <= 20000
+    _timed(cmd)
+
+
+@pytest.mark.parametrize("filler", ["rm ", "print("])
+def test_flat_filler_returns_verdict(filler):
+    _timed(filler * (20000 // len(filler)))
+
+
+def test_deadline_fails_closed(monkeypatch):
+    import secrets_guard
+    ticks = iter(range(0, 1000, 5))
+    monkeypatch.setattr(secrets_guard.time, "monotonic", lambda: next(ticks))
+    assert check("Bash", {"command": "ls -la"}) == secrets_guard.BLOCKED_COMPLEX

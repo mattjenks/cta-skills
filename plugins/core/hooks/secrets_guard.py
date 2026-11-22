@@ -20,13 +20,15 @@ Known gaps: `@file` mentions attach without a tool call; paths built at
 runtime from character codes; a secret read and its output split across
 lines (content inspection is per line for file reads); globs (`cat .en*`);
 indirect reads (`grep -r KEY .`); multi-argument or multi-line environment
-dumps in file content; Bash tokens that merely
+dumps in file content; Bash commands over 20,000 characters (e.g. large
+heredoc writes) are blocked as too complex; Bash tokens that merely
 mention a secret-looking name (e.g. grep for access_code) are blocked.
 """
 
 import json
 import re
 import sys
+import time
 from pathlib import PurePosixPath
 
 # Committed templates are safe to read. Removed before matching, so naming one
@@ -48,12 +50,12 @@ _PRINT_ENV = "print" + "env"
 _OUTPUT = r"(?:print|pprint|dumps?|write|writelines|echo|log\w*|post|put|send\w*|stringify)"
 ENV_DUMP = (
     re.compile(r"\b" + _PRINT_ENV + r"\b", re.IGNORECASE),
-    re.compile(r"\becho\b.*\$\{?[A-Z_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)"),
+    re.compile(r"\becho\b.{0,200}\$\{?[A-Z_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)"),
     re.compile(r"^\s*env\s*[|>]", re.MULTILINE),  # shell script line: `env | ...`
     re.compile(r"/proc/(?:self|\d+)/environ"),
     re.compile(r"\bexport\s+-p\b|\bdeclare\s+-x\b|\bcompgen\s+-e\b"),
-    re.compile(r"\b" + _OUTPUT + r"\s*\([^)\n]*\bos\.environ\b(?!\s*(?:\.get\b|\[|\.pop\b|\.setdefault\b|\.update\b))"),
-    re.compile(r"\b" + _OUTPUT + r"\s*\([^)\n]*\bprocess\.env\b(?!\s*[.\[])", re.IGNORECASE),
+    re.compile(r"\b" + _OUTPUT + r"\s*\([^)\n]{0,500}\bos\.environ\b(?!\s*(?:\.get\b|\[|\.pop\b|\.setdefault\b|\.update\b))"),
+    re.compile(r"\b" + _OUTPUT + r"\s*\([^)\n]{0,500}\bprocess\.env\b(?!\s*[.\[])", re.IGNORECASE),
     re.compile(r"\bENV\.to_h\b|\bENV\.to_a\b|\bputs\s+ENV\s*$", re.MULTILINE),
 )
 
@@ -80,6 +82,8 @@ BLOCKED_ENV = (
 BLOCKED_COMPLEX = "BLOCKED: command too complex for the secrets guard to inspect"
 MAX_COMMAND = 20_000
 MAX_OPENERS = 256
+MAX_INSPECTED = 200_000
+DEADLINE_SECONDS = 2.0
 BLOCKED_RM = "BLOCKED: refusing to run a recursive-force delete (rm -rf)."
 
 
@@ -145,16 +149,19 @@ def _env_dump(text: str) -> bool:
     return any(p.search(text) for p in ENV_DUMP)
 
 
+_REC = re.compile(r"-[a-zA-Z]*[rR][a-zA-Z]*")
+_FORCE = re.compile(r"-[a-zA-Z]*f[a-zA-Z]*")
+
+
 def _is_dangerous_rm(command: str) -> bool:
+    """rm with recursive and force flags after it in the same segment (linear)."""
     for seg in re.split(r"[;&|\n()`]+", command):
-        tokens = seg.split()
-        for i, tok in enumerate(tokens):
-            if PurePosixPath(tok).name != "rm":
-                continue
-            flags = [t for t in tokens[i + 1 :] if t.startswith("-")]
-            rec = any(f == "--recursive" or re.fullmatch(r"-[a-zA-Z]*[rR][a-zA-Z]*", f) for f in flags)
-            force = any(f == "--force" or re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", f) for f in flags)
-            if rec and force:
+        rec = force = False
+        for tok in reversed(seg.split()):  # suffix flags, so no per-rm slicing
+            if tok.startswith("-"):
+                rec = rec or tok == "--recursive" or bool(_REC.fullmatch(tok))
+                force = force or tok == "--force" or bool(_FORCE.fullmatch(tok))
+            elif rec and force and PurePosixPath(tok).name == "rm":
                 return True
     return False
 
@@ -197,6 +204,10 @@ def _contents(tool_name: str, tool_input: dict) -> list:
 
 def check(tool_name: str, tool_input: dict) -> str | None:
     """Return a block reason, or None to allow."""
+    return _check(tool_name, tool_input, time.monotonic() + DEADLINE_SECONDS)
+
+
+def _check(tool_name: str, tool_input: dict, deadline: float) -> str | None:
     tool_input = tool_input if isinstance(tool_input, dict) else {}
 
     if tool_name in ("Read", "Edit", "MultiEdit", "Write", "NotebookEdit"):
@@ -220,14 +231,25 @@ def check(tool_name: str, tool_input: dict) -> str | None:
         if len(command) > MAX_COMMAND or command.count("$(") + command.count("`") > MAX_OPENERS:
             return BLOCKED_COMPLEX
         bases = _bases(command)
-        # Unexpanded forms first, then substitution bodies.
-        for stage in (lambda b: [b], _substitutions):
-            for base in bases:
-                for text in stage(base):
-                    for variant in (text, _normalize(text)):
-                        reason = _bash_reason(variant)
-                        if reason:
-                            return reason
+        # Unexpanded forms first, then substitution bodies, smallest first.
+        for base in bases:
+            for variant in (base, _normalize(base)):
+                if time.monotonic() > deadline:
+                    return BLOCKED_COMPLEX
+                reason = _bash_reason(variant)
+                if reason:
+                    return reason
+        bodies = [sorted(set(_substitutions(b)), key=len) for b in bases]
+        if sum(2 * len(t) for ts in bodies for t in ts) > MAX_INSPECTED:
+            return BLOCKED_COMPLEX
+        for ts in bodies:
+            for text in ts:
+                for variant in (text, _normalize(text)):
+                    if time.monotonic() > deadline:
+                        return BLOCKED_COMPLEX
+                    reason = _bash_reason(variant)
+                    if reason:
+                        return reason
         return None
 
     return None
