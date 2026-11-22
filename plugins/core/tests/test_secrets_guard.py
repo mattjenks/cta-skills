@@ -66,7 +66,15 @@ ROWS = [
     ("MultiEdit", {"file_path": "x.py", "edits": [
         {"new_string": "ok = 1"},
         {"new_string": "print(dict(os.environ))"}]}, True),
+    ("Write", {"file_path": "x.py", "content": "print(os.environ.copy())"}, True),
+    ("Write", {"file_path": "x.py", "content": "requests.post(u, json=os.environ.copy())"}, True),
+    ("Bash", {"command": "cat .\\env"}, True),
+    ("Bash", {"command": "cat .e\\nv"}, True),
     # --- allow ---
+    ("Write", {"file_path": "x.py", "content": "def f(env):\n    return env"}, False),
+    ("Write", {"file_path": "x.py", "content": "app = create_app(env)\nos.environ.update(env)\n    env)"}, False),
+    ("Write", {"file_path": "x.js", "content": "const f = (env) => env.x"}, False),
+    ("Write", {"file_path": "x.py", "content": "subprocess.check_output(['git','status'], env=os.environ)"}, False),
     ("Read", {"file_path": ".env.example"}, False),
     ("Read", {"file_path": "docs/environment.md"}, False),
     ("Read", {"file_path": "src/tokenizer.py"}, False),
@@ -121,3 +129,11 @@ def test_main_exit_codes():
 def test_check_fails_open_on_odd_input():
     assert check("Bash", {"command": None}) is None
     assert check("Write", {"content": 5}) is None
+
+
+def test_deep_nesting_blocks_quickly():
+    import time
+    cmd = "$(" * 30 + "cat .env" + ")" * 30
+    start = time.time()
+    assert check("Bash", {"command": cmd}) is not None
+    assert time.time() - start < 1

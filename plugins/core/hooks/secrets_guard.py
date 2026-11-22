@@ -18,7 +18,9 @@ session.
 
 Known gaps: `@file` mentions attach without a tool call; paths built at
 runtime from character codes; a secret read and its output split across
-lines (content inspection is per line for file reads); Bash tokens that merely
+lines (content inspection is per line for file reads); globs (`cat .en*`);
+indirect reads (`grep -r KEY .`); multi-argument or multi-line environment
+dumps in file content; Bash tokens that merely
 mention a secret-looking name (e.g. grep for access_code) are blocked.
 """
 
@@ -46,12 +48,12 @@ _PRINT_ENV = "print" + "env"
 _OUTPUT = r"(?:print|pprint|dumps?|write|writelines|echo|log\w*|post|put|send\w*|stringify)"
 ENV_DUMP = (
     re.compile(r"\b" + _PRINT_ENV + r"\b", re.IGNORECASE),
-    re.compile(r"(?:^|[;&|(`])\s*env\s*(?:$|[|>;&)`])", re.MULTILINE),  # bare `env`
     re.compile(r"\becho\b.*\$\{?[A-Z_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)"),
+    re.compile(r"^\s*env\s*[|>]", re.MULTILINE),  # shell script line: `env | ...`
     re.compile(r"/proc/(?:self|\d+)/environ"),
     re.compile(r"\bexport\s+-p\b|\bdeclare\s+-x\b|\bcompgen\s+-e\b"),
-    re.compile(_OUTPUT + r"\s*\([^)\n]*\bos\.environ\b(?!\s*(?:\.get\b|\[|\.pop\b|\.setdefault\b|\.copy\b|\.update\b))"),
-    re.compile(_OUTPUT + r"\s*\([^)\n]*\bprocess\.env\b(?!\s*[.\[])", re.IGNORECASE),
+    re.compile(r"\b" + _OUTPUT + r"\s*\([^)\n]*\bos\.environ\b(?!\s*(?:\.get\b|\[|\.pop\b|\.setdefault\b|\.update\b))"),
+    re.compile(r"\b" + _OUTPUT + r"\s*\([^)\n]*\bprocess\.env\b(?!\s*[.\[])", re.IGNORECASE),
     re.compile(r"\bENV\.to_h\b|\bENV\.to_a\b|\bputs\s+ENV\s*$", re.MULTILINE),
 )
 
@@ -62,6 +64,10 @@ _SINK = re.compile(
     r"|\bprint\s*\(|console\.log|sys\.stdout|\becho\b|socket|sendall|smtp",
     re.IGNORECASE,
 )
+
+# Bare `env` (maybe piped or redirected). Shell commands only: in file content
+# `env` is an ordinary identifier.
+BARE_ENV = re.compile(r"(?:^|[;&|(`])\s*env\s*(?:$|[|>;&)`])", re.MULTILINE)
 
 BLOCKED_SECRET = (
     "BLOCKED: access to secrets is not allowed.\n"
@@ -79,37 +85,46 @@ def _normalize(command: str) -> str:
     return " ".join(command.replace("'", "").replace('"', "").split())
 
 
-def _substitutions(command: str) -> list[str]:
-    """Inner text of every $(...) and backtick span, recursively."""
+def _spans(text: str) -> list[str]:
+    """Inner text of every $(...) and backtick span in text (nested ones too)."""
     found: list[str] = []
     i = 0
     while True:
-        i = command.find("$(", i)
+        i = text.find("$(", i)
         if i < 0:
             break
         depth, j = 1, i + 2
-        while j < len(command) and depth:
-            depth += {"(": 1, ")": -1}.get(command[j], 0)
+        while j < len(text) and depth:
+            depth += {"(": 1, ")": -1}.get(text[j], 0)
             j += 1
-        inner = command[i + 2 : j - 1 if depth == 0 else j]
-        found.append(inner)
+        found.append(text[i + 2 : j - 1 if depth == 0 else j])
         i += 2
-    for m in re.finditer(r"`([^`]*)`", command):
-        found.append(m.group(1))
-    out = list(found)
-    for inner in found:
-        if inner != command:
-            out.extend(_substitutions(inner))
+    found.extend(m.group(1) for m in re.finditer(r"`([^`]*)`", text))
+    return found
+
+
+def _substitutions(command: str) -> list[str]:
+    """All substitution bodies, via a worklist with a seen-set (linear)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    work = [command]
+    while work:
+        for inner in _spans(work.pop()):
+            if inner not in seen and inner != command:
+                seen.add(inner)
+                out.append(inner)
+                work.append(inner)
     return out
 
 
 def _variants(command: str) -> list[str]:
-    base = command.replace("\\", "/")
-    texts = [base, *_substitutions(base)]
     out: list[str] = []
-    for t in texts:
-        out.append(t)
-        out.append(_normalize(t))
+    # Backslash as a Windows separator, and backslash deleted (the shell reads
+    # `.e\nv` as `.env`).
+    for base in (command.replace("\\", "/"), command.replace("\\", "")):
+        for t in (base, *_substitutions(base)):
+            out.append(t)
+            out.append(_normalize(t))
     return out
 
 
@@ -191,7 +206,7 @@ def check(tool_name: str, tool_input: dict) -> str | None:
     if tool_name in ("Bash", "PowerShell"):
         command = str(tool_input.get("command") or "")
         for variant in _variants(command):
-            if _env_dump(variant):
+            if _env_dump(variant) or BARE_ENV.search(variant):
                 return BLOCKED_ENV
             if _command_names_secret(variant):
                 return BLOCKED_SECRET
