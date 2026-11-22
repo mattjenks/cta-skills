@@ -192,3 +192,19 @@ def test_notify_not_a_table(tmp_path):
     cfg = load_config(path=_write(tmp_path, 'notify = "x"\n'), plugin_root=tmp_path)
     assert cfg.notify_min_seconds == 300
     assert cfg.notes == ("config invalid: notify: must be a table",)
+
+
+def test_backup_dir(tmp_path):
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[telemetry]\nbackup_dir = "~/Backups/cta"\n')
+    c = load_config(cfg)
+    assert c.backup_dir == Path("~/Backups/cta").expanduser() and not c.notes
+
+
+def test_backup_dir_default_and_invalid(tmp_path):
+    cfg = tmp_path / "c.toml"
+    cfg.write_text("")
+    assert load_config(cfg).backup_dir is None
+    cfg.write_text("[telemetry]\nbackup_dir = 5\n")
+    c = load_config(cfg)
+    assert c.backup_dir is None and any("telemetry.backup_dir" in n for n in c.notes)

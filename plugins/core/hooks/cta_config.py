@@ -33,6 +33,7 @@ class CtaConfig:
     context: tuple[Path, ...] = ()
     kb: Path | None = None
     notify_min_seconds: int = DEFAULT_NOTIFY_MIN_SECONDS
+    backup_dir: Path | None = None
     notes: tuple[str, ...] = ()
 
 
@@ -113,11 +114,19 @@ def load_config(path: Path | None = None, plugin_root: Path | None = None) -> Ct
         else:
             notes.append("config invalid: notify.min_turn_seconds: must be an integer >= 0")
 
+    backup_dir: Path | None = None
+    telemetry = data.get("telemetry")
+    if telemetry is not None and not isinstance(telemetry, dict):
+        notes.append("config invalid: telemetry: must be a table")
+    elif telemetry and "backup_dir" in telemetry:
+        backup_dir = _path_value(telemetry["backup_dir"], "telemetry.backup_dir", notes)
+
     return CtaConfig(
         persona=persona,
         context=tuple(context),
         kb=kb,
         notify_min_seconds=notify_min_seconds,
+        backup_dir=backup_dir,
         notes=tuple(notes),
     )
 

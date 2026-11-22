@@ -72,3 +72,40 @@ or the file has been idle for 5 minutes.
 
 **The archive contains prompt text** (`claude_code.user_prompt`) and is private. Never commit it,
 share it or sync it to a shared location. Loki holds the same content.
+
+## Nightly backup and schedules (launchd)
+
+Set the destination in `~/.config/cta/config.toml` (no personal path lives in the repo):
+
+```toml
+[telemetry]
+backup_dir = "~/Backups/cta-telemetry"   # any folder, e.g. one inside a synced drive
+```
+
+Three user agents live in `telemetry/launchd/`: `net.cta.drift-enrich` (02:00, `--since 26h`),
+`net.cta.telemetry-backup` (02:30) and `net.cta.telemetry-health` (at login: waits up to 5 minutes
+for Docker, runs `smoke_test.py`, notifies **only on failure**). All set `CTA_UNATTENDED=1`, so the
+notify hook stays silent.
+
+```sh
+telemetry/launchd/install.sh     # substitutes __REPO__ / __HOME__, writes ~/Library/LaunchAgents, bootstraps
+telemetry/launchd/uninstall.sh   # boots them out and removes the installed plists
+launchctl kickstart gui/$(id -u)/net.cta.telemetry-backup    # run one now
+```
+
+Logs: `~/.local/share/cta/logs/<label>.log`.
+
+**Login autostart for containers:** run Colima at login with `brew services start colima`
+(containers already have `restart: unless-stopped`).
+
+**What the backup does:** `uv run --script telemetry/backup.py [--day YYYY-MM-DD]` copies rotated
+archive files dated on or before the day that are not yet at the destination, plus a snapshot of the
+live file as `otel-live-<YYYY-MM-DD>.jsonl` (replaced on a same-day re-run). Each copy goes to a temp
+file, is verified by size and SHA-256, then renamed, so a failed copy leaves no partial file. The
+source is never modified. With nothing to copy it logs "nothing to back up" and exits 0; with
+`backup_dir` unset it exits 1.
+
+**Restore:** the files are plain JSONL (OTLP JSON from the collector's file exporter). Copy the
+needed `otel-*.jsonl` / `otel-live-*.jsonl` files from the backup folder back into
+`~/.local/share/cta/telemetry/archive/` for reference or `jq` analysis. Re-ingesting into Loki or
+Prometheus is a manual step; the archive is the raw record, not a database dump.

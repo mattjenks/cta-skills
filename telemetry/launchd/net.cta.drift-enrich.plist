@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>net.cta.drift-enrich</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>uv</string>
+    <string>run</string>
+    <string>--script</string>
+    <string>__REPO__/telemetry/enrich_drift.py</string>
+    <string>--since</string>
+    <string>26h</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CTA_UNATTENDED</key>
+    <string>1</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__HOME__/.local/share/cta/logs/net.cta.drift-enrich.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/.local/share/cta/logs/net.cta.drift-enrich.log</string>
+</dict>
+</plist>
