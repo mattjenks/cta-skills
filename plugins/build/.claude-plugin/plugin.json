@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "build",
+  "displayName": "CTA Build",
+  "version": "0.1.0",
+  "description": "Chief Technology Assistant build loop: plan-driven implementation, review and security gates, and knowledge-base write-back for the build stage.",
+  "author": {
+    "name": "Matt Jenks",
+    "url": "https://github.com/mattjenks"
+  },
+  "homepage": "https://github.com/mattjenks/cta-skills",
+  "repository": "https://github.com/mattjenks/cta-skills",
+  "license": "MIT",
+  "keywords": ["skills", "hooks", "build", "review", "security", "claude-code"]
+}

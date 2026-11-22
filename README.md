@@ -15,6 +15,11 @@ The assistant's voice is a swappable persona. The bundled one is `default` ("CTA
 
 Skills are invoked as `/core:<skill>`.
 
+| Plugin | Install | Skills |
+|---|---|---|
+| `core` | `/plugin install core@cta` | `/core:<skill>` |
+| `build` | `/plugin install build@cta` | `/build:<skill>` (scaffold; skills land in later releases) |
+
 ## Requirements
 
 - **macOS.** Desktop notifications (`osascript`), the scheduled jobs (launchd) and the telemetry
