@@ -316,3 +316,107 @@ def test_parse_since():
     assert enrich_drift.parse_since("30m", now) == now - timedelta(minutes=30)
     with pytest.raises(ValueError):
         enrich_drift.parse_since("yesterday", now)
+
+
+# --- fix round 1 ------------------------------------------------------------
+
+@pytest.mark.parametrize("content", [b"{not json", b"[]", b'{"files": []}', b"\xff\xfe\x00"])
+def test_corrupt_state_fails_loud_and_posts_nothing(tmp_path, collector, capsys, content):
+    endpoint, bodies = collector
+    projects = tmp_path / "projects"
+    write_transcript(projects, lines_one_episode())
+    state = tmp_path / "state" / "drift.json"
+    state.parent.mkdir()
+    state.write_bytes(content)
+
+    rc = enrich_drift.main(since_far_past(), projects=projects, state_path=state,
+                           endpoint=endpoint)
+
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "unreadable state" in err and str(state) in err
+    assert bodies == []
+    assert state.read_bytes() == content
+    assert sorted(p.name for p in state.parent.iterdir()) == ["drift.json"]
+
+
+@pytest.fixture
+def failing_collector():
+    """An OTLP stand-in that answers every POST with HTTP 500."""
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(500)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+
+
+def test_collector_http_error_keeps_high_water_mark(tmp_path, failing_collector, capsys):
+    projects = tmp_path / "projects"
+    write_transcript(projects, lines_one_episode())
+    state = tmp_path / "state" / "drift.json"
+    state.parent.mkdir()
+    state.write_text('{"version": 1, "files": {}}', encoding="utf-8")
+    before = state.read_bytes()
+
+    rc = enrich_drift.main(since_far_past(), projects=projects, state_path=state,
+                           endpoint=failing_collector)
+
+    assert rc == 1
+    assert "rejected" in capsys.readouterr().err
+    assert state.read_bytes() == before
+    assert sorted(p.name for p in state.parent.iterdir()) == ["drift.json"]
+
+
+def test_partial_batch_marks_settled_episode_then_posts_rest(tmp_path, collector):
+    endpoint, bodies = collector
+    projects = tmp_path / "projects"
+    # First skill has two follow-ups (settled); the second has none and the file is fresh.
+    lines = [prompt("make a skill", 0), *skill_turn("create-skill", 10), prompt("thanks", 60),
+             prompt("now audit", 70), skill_call("config-audit", 80, "sk2"),
+             tool_result("sk2", 81), say("audited", 82, "m9")]
+    path = write_transcript(projects, lines, age_s=10)
+    state = tmp_path / "state" / "drift.json"
+
+    assert enrich_drift.main(since_far_past(), projects=projects, state_path=state,
+                             endpoint=endpoint) == 0
+    [(_, body)] = bodies
+    [record] = body["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+    assert {"key": "skill", "value": {"stringValue": "core:create-skill"}} in record["attributes"]
+    assert json.loads(state.read_text())["files"][str(path)] == "2026-01-05T10:00:10.000Z"
+
+    # Later, once the transcript has gone idle, the held episode posts on its own.
+    old = datetime.now(timezone.utc).timestamp() - 3600
+    os.utime(path, (old, old))
+    assert enrich_drift.main(since_far_past(), projects=projects, state_path=state,
+                             endpoint=endpoint) == 0
+    assert len(bodies) == 2
+    [record] = bodies[1][1]["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+    assert {"key": "skill", "value": {"stringValue": "core:config-audit"}} in record["attributes"]
+    assert json.loads(state.read_text())["files"][str(path)] == "2026-01-05T10:01:20.000Z"
+
+
+def test_prompt_and_response_text_never_posted(tmp_path, collector):
+    endpoint, bodies = collector
+    canary = "CANARY-7f3a91c2"
+    projects = tmp_path / "projects"
+    lines = [prompt(f"make a skill {canary}", 0), skill_call("create-skill", 10),
+             tool_result("sk1", 11, f"Launching {canary}"), skill_base(11),
+             tool_use("t1", 12), tool_result("t1", 13, f"file says {canary}"),
+             say(f"Here you go {canary}", 14, "m-end"), prompt(f"no, {canary}", 60),
+             prompt(f"ok {canary}", 70)]
+    write_transcript(projects, lines)
+    state = tmp_path / "state" / "drift.json"
+
+    assert enrich_drift.main(since_far_past(), projects=projects, state_path=state,
+                             endpoint=endpoint) == 0
+    [(_, body)] = bodies
+    assert canary not in json.dumps(body)
+    assert "drifted" in json.dumps(body)

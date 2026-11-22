@@ -15,6 +15,9 @@ Outcome:
 
 It never calls a model; it only reads `~/.claude/projects/**/*.jsonl`. The per-transcript
 high-water mark in `<state>/drift.json` advances only after the Collector accepts the POST.
+Delivery is at-least-once: a crash between the POST and the state file's replace re-posts that
+batch on the next run. A missing state file starts fresh; a corrupt one stops the run (exit 1)
+without posting.
 
 Usage: uv run telemetry/enrich_drift.py [--since 26h]
 """
@@ -284,14 +287,26 @@ def post(endpoint: str, body: dict) -> None:
 
 # --- state and main -----------------------------------------------------------
 
+class StateError(Exception):
+    """drift.json exists but cannot be read or parsed."""
+
+
 def load_state(path: Path) -> dict:
+    """A missing file is an empty state. Anything else unreadable raises StateError: treating it
+    as empty would silently re-post every episode in the window."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and isinstance(data.get("files"), dict):
-            return data
-    except (OSError, ValueError):
-        pass
-    return {"version": 1, "files": {}}
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {"version": 1, "files": {}}
+    except OSError as e:
+        raise StateError(str(e)) from e
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as e:
+        raise StateError(f"not valid JSON ({e})") from e
+    if not (isinstance(data, dict) and isinstance(data.get("files"), dict)):
+        raise StateError('expected an object with a "files" object')
+    return data
 
 
 def save_state(path: Path, state: dict) -> None:
@@ -323,7 +338,12 @@ def main(since: datetime, *, projects: Path = PROJECTS, state_path: Path | None 
          endpoint: str = OTLP, now: datetime | None = None) -> int:
     state_path = state_path or default_state_path()
     now = now or datetime.now(timezone.utc)
-    state = load_state(state_path)
+    try:
+        state = load_state(state_path)
+    except StateError as e:
+        print(f"drift: unreadable state file {state_path}: {e}. Nothing posted; fix or remove "
+              "the file (removing it re-posts every episode in --since)", file=sys.stderr)
+        return 1
     batch: list[Episode] = []
     marks: dict[str, str] = {}
 
