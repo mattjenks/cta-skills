@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: block-edits-to-protected-path
+expected_outcome: |
+  A PreToolUse hook script that exits 2 with a reason on stderr for edits under db/migrations/, exits 0 otherwise and on bad input, with subprocess tests and wiring in hooks.json.

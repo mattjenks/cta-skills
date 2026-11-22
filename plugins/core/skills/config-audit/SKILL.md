@@ -1,6 +1,6 @@
 ---
 name: config-audit
-description: Read-only audit of everything a repository's coding-agent config can run on its own - Claude Code hooks, status lines and helper commands, MCP servers, Codex and Cursor hooks, Gemini CLI settings, VS Code folder-open tasks, plugin marketplaces, permission allow rules, MCP auto-approval, and skills that run inline shell - plus the project's dependencies (missing lockfiles, known-poisoned releases, code-running .pth files), secrets saved in settings.local.json or pasted into stored Claude Code and Codex conversations, and known-bad editor extensions. Explains each risky entry in plain words and how to fix it, and never prints secret values. Use when the user says "audit my agent config", "what runs when I open this repo", "check my repos for malicious hooks", "is this repo safe to open", before trusting or opening a cloned repo, after pulling changes to .claude, .mcp.json, .codex, .cursor or .vscode, or after a supply-chain incident.
+description: Use when asked whether a repo, clone or link is safe to open or trust, to audit agent config, what runs when a repo opens, or whether a scan with zero flags means clean. Read-only audit of hooks, MCP servers, status lines, folder-open tasks, allow rules, risky dependencies and secrets in settings or chats. Also after pulling .claude or .mcp.json changes or a supply-chain incident.
 argument-hint: "[path to a repo, or a folder of repos]"
 ---
 
@@ -22,23 +22,9 @@ and checks the first for hidden text.
 
 ## What it checks
 
-- **Config that runs code at startup**: hooks, status lines, MCP servers, plugins, skills
-  with inline shell, VS Code folder-open tasks. North Korean attackers hid a backdoor
-  download in `.claude/settings.json` hooks; an npm worm planted `SessionStart` hooks.
-- **Poisoned dependencies**: manifests with no lockfile, and known-bad releases pinned or
-  installed, like agent-framework 1.26.1 and 1.26.2 on PyPI, which stole keys through a
-  `.pth` file that runs whenever Python starts.
-- **Secrets saved by "don't ask again"**: keys inside approved commands and env in
-  `settings.local.json`, and that file committed to git. Apiiro found 1,122 public ones.
-- **Secrets in your conversation history**: keys pasted into Claude Code or Codex sessions
-  sit on disk in the transcripts. Cursor's breach exposed stored agent traces with
-  unredacted credentials.
-- **Fake editor extensions**: known-bad versions in VS Code, Cursor or Windsurf, like the
-  fake Claude Code extension 2.1.312 and 2.1.313 in Cursor's marketplace cache.
-- **LLMjacking doors**: AI gateways left on a default key (LiteLLM `sk-1234`) and endpoint
-  overrides that route your prompts and keys through someone else's server.
-- **Hidden instructions**: invisible characters in `CLAUDE.md`, `AGENTS.md` and rules,
-  text the agent reads and you cannot see.
+Seven kinds of problem: config that runs code at startup, poisoned dependencies, secrets saved by
+"don't ask again", secrets in conversation history, fake editor extensions, LLMjacking doors and hidden
+instructions. Read `references/what-it-checks.md` for the detail and the incidents behind each.
 
 ## Ground rules
 
@@ -91,34 +77,8 @@ output says `CAPPED`, say so in the report.
 
 ## Step 3: judge every entry
 
-The flags are deliberately few, so each deserves a sentence in the report. Treat them as
-leads, then read the entry itself.
-
-| Flag | What it means in plain words |
-|---|---|
-| `pipe-to-shell`, `download-then-run` | Fetches code from the internet and runs it. Whoever controls that server controls the machine, and can change the payload at any time. The single strongest signal. |
-| `encoded-payload` | base64 or `-EncodedCommand`: the readable command is a wrapper and the real one is hidden. Legitimate config almost never needs this. |
-| `remote-host` | Contacts a host each time it runs. Ask who owns the domain and why a hook needs the network at all. "Silenced output" on top of that is worse. |
-| `hidden-process` | A hidden window, `nohup`, `setsid`: keeps running after the agent moves on. |
-| `credential-files` | Touches `~/.ssh`, `~/.aws`, `.npmrc`, agent login files. A formatter has no reason to. |
-| `endpoint-override` | `ANTHROPIC_BASE_URL`, `*_BASE_URL`, proxies, `NODE_OPTIONS`: routes every prompt, file and key through someone else's server, or changes what code loads. |
-| `unpinned-package` | An MCP server run through `npx`, `uvx` or `bunx` with no version, so the next release to that package runs automatically. Check the package exists, is the one intended (typosquats), and pin it. |
-| `auto-approve-mcp` | `enableAllProjectMcpServers: true` approves every server in `.mcp.json`, including ones a later pull adds. |
-| `bypass-permissions` | `bypassPermissions`, Codex `approval_policy = "never"` or `danger-full-access`: nothing asks before acting. |
-| `broad-allow` | Allow rules like `Bash`, `Bash(curl *)`, `Bash(python *)` let the agent run arbitrary code without a prompt. Narrow them to exact commands. |
-| `secret-in-config` | A literal key, password or token in env, headers, args or an allow rule. If the file was ever committed, rotating is required, not optional: it is still in git history. |
-| `runs-on-open` | A VS Code or Cursor task with `runOn: folderOpen`: runs the moment the folder opens, before any agent starts. |
-| `hidden-characters` | Zero-width or tag characters in an instruction file: instructions the agent reads and a reviewer cannot see. |
-| `plugin-source` | Adds a plugin marketplace. Plugins ship their own hooks and MCP servers. |
-| `hooks-reenabled` | A project file sets `disableAllHooks: false`, overriding a user who turned hooks off. |
-| `no-lockfile` | A manifest with dependencies and no lockfile (in its folder or above it), so every install takes the newest release. That is how a poisoned release reaches a machine. |
-| `known-compromised` | A lockfile, requirements pin or installed package matches a release known to carry malware. Remove it; if it was ever installed, treat every key on the machine as stolen. |
-| `suspicious-pth` | A `.pth` file in a project virtualenv that is not a standard one and runs code every time Python starts. Only its name is printed; read it by hand. |
-| `local-settings-tracked` | `.claude/settings.local.json` is in the git index, so approved commands and the secrets inside them get pushed. |
-| `secret-in-history` | A key pasted into or printed in a stored Claude Code or Codex conversation. Rotate it, then delete or redact the transcript. |
-| `known-bad-extension` | An installed editor extension version known to be fake or malicious. |
-| `default-gateway-key` | A LiteLLM gateway set to its documented default key `sk-1234`: anyone who can reach it spends on your account. |
-| `unparsed`, `unreadable` | The file could not be parsed or read. Read it by hand; a broken file can still run. |
+Read `references/flags.md` for what each flag means in plain words (from `pipe-to-shell` to
+`unparsed`). Give each flagged entry a sentence in the report, and treat flags as leads: read the entry itself.
 
 Then read what no flag covers:
 
@@ -137,19 +97,10 @@ problems found".
 
 ## Step 4: for repos already trusted, read the history
 
-A repo the user already opens daily is where a malicious change lands unnoticed. Trust
-is remembered per folder: tested on Claude Code 2.1.330 (2026-11-21), a hook committed
-to an already-trusted repo ran on the next launch with no new prompt. Show what changed
-in the agent config and who changed it:
-
-```bash
-git log -p -- .claude .mcp.json .codex .cursor .vscode .gemini AGENTS.md CLAUDE.md
-git diff HEAD@{1} -- .claude .mcp.json .codex .cursor .vscode AGENTS.md CLAUDE.md   # since the last pull
-git ls-files | grep settings.local.json   # should print nothing
-```
-
-The classic sign is a config change inside a commit whose message is about something
-else, or from an author who does not normally touch tooling.
+A repo the user already opens daily is where a malicious change lands unnoticed: trust is remembered per
+folder, so a hook committed to an already-trusted repo runs on the next launch with no new prompt. Read
+`references/trusted-repos.md` for the `git log` and `git diff` commands that show what changed in the agent
+config and who changed it.
 
 ## Step 5: report
 
@@ -179,15 +130,17 @@ settings and the cleanup steps after a real compromise are in
 
 ## Resources
 
+- `references/what-it-checks.md`: the seven kinds of problem and the incidents behind them. Read when explaining scope.
+- `references/flags.md`: what every scanner flag means. Read when judging entries (Step 3).
+- `references/trusted-repos.md`: git history commands for already-trusted repos. Read at Step 4.
 - `scripts/agent_config_audit.py`: the scanner. `--json` for structured output,
   `--user` for home-directory config and extensions, `--history` or `--history-for
   <repo>` for stored conversations, `--show-values` to disable config redaction. Run it;
   do not read it into context.
 - `scripts/_test_agent_config_audit.py`: builds a booby-trapped repo and a clean one in
   a temp dir, plus fake transcripts, virtualenvs and extensions, and checks every flag,
-redaction, and that the scan changes no file. Run
-  it after editing the scanner.
+  redaction, and that the scan changes no file. Run it after editing the scanner.
 - `references/remediation.md`: concrete fixes for individuals and teams, and what to
-  do when a hook already ran.
+  do when a hook already ran. Read at Step 6.
 - Secrets guard: when the scan finds secrets in config, or no secret guard is installed, recommend
   the `core` plugin's `secrets_guard.py` PreToolUse hook (see `references/remediation.md`).

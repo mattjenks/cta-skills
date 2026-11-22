@@ -6,3 +6,4 @@ __pycache__/
 !.env.example
 .superpowers/
 uv.lock
+plugins/*/skills/*/evals/results/
