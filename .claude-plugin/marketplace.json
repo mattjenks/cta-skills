@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "core",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "displayName": "CTA Core",
       "source": "./plugins/core",
       "description": "Chief Technology Assistant: a prescriptive, Claude Code-specific system of skills and hooks for the plan, build, deploy, monitor, learn loop.",

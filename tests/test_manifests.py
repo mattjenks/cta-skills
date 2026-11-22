@@ -116,3 +116,30 @@ def test_wired_secrets_guard_blocks():
     assert blocked.returncode == 2, blocked.stderr
     allowed = _run_wired_guard("Read", {"file_path": str(ROOT / "README.md")})
     assert allowed.returncode == 0, allowed.stderr
+
+
+SKILLS_DIR = PLUGIN_DIR / "skills"
+AUTHORING_SKILLS = {"create-skill", "create-hook", "config-audit"}
+
+
+def _frontmatter(text):
+    match = re.match(r"---\n(.*?)\n---\n", text, re.S)
+    assert match, "missing YAML frontmatter"
+    fields = {}
+    for line in match.group(1).splitlines():
+        key, sep, value = line.partition(":")
+        if sep and not line.startswith((" ", "\t")):
+            fields[key.strip()] = value.strip().strip("\"'")
+    return fields
+
+
+def test_skill_frontmatter():
+    skills = sorted(SKILLS_DIR.glob("*/SKILL.md"))
+    assert AUTHORING_SKILLS <= {p.parent.name for p in skills}
+    for path in skills:
+        text = path.read_text()
+        fields = _frontmatter(text)
+        assert fields.get("name") == path.parent.name, path
+        description = fields.get("description", "")
+        assert 0 < len(description) <= 1024, (path, len(description))
+        assert len(text.splitlines()) <= 500, (path, len(text.splitlines()))
