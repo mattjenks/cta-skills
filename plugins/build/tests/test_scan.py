@@ -763,3 +763,141 @@ def test_requirements_findings_name_their_file(tmp_path):
     got = {(f.rule, f.path) for f in out if f.tool == "pip-audit"}
     assert got == {("V-requirements.txt", "requirements.txt"),
                    ("V-requirements-dev.txt", "requirements-dev.txt")}
+
+
+# ---------------------------------------------------------------- fix round 4
+
+def test_gitleaks_scans_content_of_ignore_files(tmp_path):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "d").mkdir()
+    for name in (".gitignore", "d/.semgrepignore", ".gitleaksignore", ".gitleaks.toml"):
+        (repo / name).write_text(f"# key {SECRET}\n")
+    (repo / "a.py").write_text("1\n")
+    git(repo, "add", "-f", ".")
+    seen = {}
+
+    def leaks(argv, kw):
+        src = Path(argv[-1])
+        seen["root_names"] = sorted(p.name for p in src.iterdir())
+        hits = sorted(str(p.relative_to(src)) for p in src.rglob("*")
+                      if p.is_file() and SECRET in p.read_text())
+        seen["hits"] = hits
+        report = [{"RuleID": "aws-access-token", "File": str(src / h), "StartLine": 1,
+                   "Description": "AWS"} for h in hits]
+        Path(argv[argv.index("--report-path") + 1]).write_text(json.dumps(report))
+        return cp("", 1)
+
+    def semgrep(argv, kw):
+        root = Path(kw["cwd"])
+        seen["semgrep_ignores"] = sorted(
+            str(p.relative_to(root)) for p in root.rglob("*")
+            if p.name in (".semgrepignore", ".gitignore", ".gitleaksignore", ".gitleaks.toml"))
+        return CLEAN
+
+    out = scan.fast_scan(repo, run=FakeRun({"semgrep": semgrep, "gitleaks": leaks}))
+    # every ignore file's content reached gitleaks, none under a name gitleaks honours
+    assert len(seen["hits"]) == 4
+    assert ".gitleaksignore" not in seen["root_names"] and ".gitleaks.toml" not in seen["root_names"]
+    paths = sorted(f.path for f in out if f.tool == "gitleaks" and f.rule == "aws-access-token")
+    assert paths == [".gitignore", ".gitleaks.toml", ".gitleaksignore", "d/.semgrepignore"]
+    # semgrep never sees a repository ignore file under a name it honours
+    assert seen["semgrep_ignores"] == [".semgrepignore"]
+    # the root .semgrepignore semgrep saw is the empty one, and gitleaks saw no ignore file
+    assert ".gitignore" not in seen["root_names"]
+
+
+def lock_repo(tmp_path, files):
+    repo, _ = full_repo(tmp_path, {"notes.md": "1\n"})
+    for name, content in files.items():
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(content)
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "m")
+    return repo
+
+
+def test_root_npm_lock_covers_only_listed_packages(tmp_path):
+    lock = json.dumps({"lockfileVersion": 3, "packages": {"": {}, "packages/a": {},
+                                                           "node_modules/x": {}}})
+    repo = lock_repo(tmp_path, {"package.json": "{}\n", "package-lock.json": lock,
+                                "packages/a/package.json": "{}\n",
+                                "tools/unrelated/package.json": "{}\n",
+                                "web/package.json": "{}\n", "web/package-lock.json": "{}\n"})
+    out = scan.full_scan(repo, "main", run=audit_run(), which=lambda n: "/b")
+    assert not_audited(out) == ["tools/unrelated/package.json"]
+
+
+def test_root_uv_lock_covers_only_workspace_members(tmp_path):
+    root = "[project]\nname='r'\n[tool.uv.workspace]\nmembers = ['libs/*']\nexclude = ['libs/skip']\n"
+    repo = lock_repo(tmp_path, {"pyproject.toml": root, "uv.lock": "v\n",
+                                "libs/one/pyproject.toml": "[project]\nname='one'\n",
+                                "libs/skip/pyproject.toml": "[project]\nname='skip'\n",
+                                "other/pyproject.toml": "[project]\nname='o'\n",
+                                "same/pyproject.toml": "[project]\n", "same/poetry.lock": "v\n"})
+    out = scan.full_scan(repo, "main", run=audit_run(), which=lambda n: "/b")
+    assert not_audited(out) == ["libs/skip/pyproject.toml", "other/pyproject.toml"]
+
+
+def test_root_lock_without_workspace_does_not_cover_nested(tmp_path):
+    repo = lock_repo(tmp_path, {"uv.lock": "v\n", "pyproject.toml": "[project]\nname='r'\n",
+                                "sub/pyproject.toml": "[project]\nname='s'\n",
+                                "package-lock.json": "{}\n", "app/package.json": "{}\n"})
+    out = scan.full_scan(repo, "main", run=audit_run(), which=lambda n: "/b")
+    assert not_audited(out) == ["app/package.json", "sub/pyproject.toml"]
+
+
+def test_unreadable_regular_file_is_high(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "bad.py").write_text("1\n")
+    (repo / "ok.py").write_text("1\n")
+    git(repo, "add", ".")
+    real_open = open
+
+    def fake_open(path, *a, **k):
+        if str(path).endswith("bad.py"):
+            raise PermissionError("denied")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(scan, "open", fake_open, raising=False)
+    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
+    out = scan.fast_scan(repo, run=run)
+    (f,) = [f for f in out if f.path == "bad.py"]
+    assert (f.rule, f.severity) == ("scan.unreadable:bad.py", "high")
+    assert run.argv("semgrep")[0][6:] == ["./ok.py"]
+
+
+def test_history_clone_is_shared_and_checkout_less(tmp_path):
+    repo, base = full_repo(tmp_path, {"a.txt": "1\n"})
+    git(repo, "checkout", "-q", "--detach")
+    (repo / "b.txt").write_text("2\n")
+    git(repo, "add", "b.txt")
+    git(repo, "commit", "-q", "-m", "detached")  # reachable from no branch
+    run = audit_run()
+    scan.full_scan(repo, "main", run=run, which=lambda n: None)
+    (clone,) = [a for a, _ in run.calls if a[:2] == ["git", "clone"]]
+    assert "--shared" in clone and "--no-checkout" in clone and "--no-local" not in clone
+    assert "--template=" in clone
+    assert len(run.argv("gitleaks")) == 1
+
+
+def test_git_environment_from_a_hook_is_ignored(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    other = make_repo(tmp_path / "other", {"elsewhere.py": "1\n"})
+    (repo / "mine.py").write_text("eval(x)\n")
+    git(repo, "add", "mine.py")
+    repo2, _ = full_repo(tmp_path / "f", {"b.py": "1\n"})
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(other / ".git" / "index"))
+    run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
+    scan.fast_scan(repo, run=run)
+    assert run.argv("semgrep")[0][6:] == ["./mine.py"]
+    for argv, kw in run.calls:
+        env = kw.get("env")
+        assert env is not None, argv
+        assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"} & set(env), argv
+    run = audit_run()
+    scan.full_scan(repo2, "main", run=run, which=lambda n: None)
+    read_tree = [kw for a, kw in run.calls if "read-tree" in a]
+    assert read_tree and read_tree[0]["env"]["GIT_INDEX_FILE"] != str(other / ".git" / "index")
+    assert all(kw.get("env") is not None and "GIT_DIR" not in kw["env"] for _, kw in run.calls)

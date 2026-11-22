@@ -77,6 +77,24 @@ def unresolved(record: Record) -> list[dict]:
     return [f for f in record["findings"] if f.get("status") in ("open", "proposed-false-positive")]
 
 
+# Repository-locating variables a git hook (or a caller) may have exported; inherited,
+# they would point every git call at another repository, worktree or index.
+_GIT_LOCAL_ENV = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_IMPLICIT_WORK_TREE", "GIT_PREFIX",
+    "GIT_NAMESPACE", "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE",
+    "GIT_NO_REPLACE_OBJECTS", "GIT_INTERNAL_SUPER_PREFIX",
+)
+
+
+def git_env(**overrides: str) -> dict:
+    """The environment for git (and tools that run git): os.environ without the
+    repository-locating GIT_* variables, plus `overrides` (e.g. a temp GIT_INDEX_FILE)."""
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCAL_ENV}
+    env.update(overrides)
+    return env
+
+
 def check_ref(ref: str) -> str:
     """Refuse refs that git would parse as options (or that contain whitespace)."""
     if not ref or ref.startswith("-") or any(c.isspace() for c in ref):
@@ -86,7 +104,8 @@ def check_ref(ref: str) -> str:
 
 def toplevel(repo: Path, run=subprocess.run) -> Path:
     """The git top-level of `repo` (a subdirectory is resolved up, never scanned alone)."""
-    proc = run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True)
+    proc = run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True,
+               env=git_env())
     if proc.returncode != 0:
         err = proc.stderr if isinstance(proc.stderr, str) else (proc.stderr or b"").decode(errors="replace")
         raise RuntimeError(f"not a git repository: {err.strip()[-300:]}")
@@ -108,14 +127,15 @@ def diff_hash(repo: Path, base: str, head: str = "HEAD") -> str:
     repo = toplevel(repo)
     cmd = [
         "git", "-C", str(repo), "-c", "core.quotepath=off",
-        "-c", "diff.algorithm=myers", "-c", "diff.suppressBlankEmpty=false", "diff", "--no-relative", "-O/dev/null", "--binary", "--full-index", "--no-renames",
+        "-c", "diff.algorithm=myers", "-c", "diff.suppressBlankEmpty=false",
+        "diff", "--no-relative", "-O/dev/null", "--binary", "--full-index", "--no-renames",
         "--no-color", "--no-ext-diff", "--no-textconv", "--no-indent-heuristic",
         "--unified=3", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/",
         f"{base}..{head}",
     ]
     digest = hashlib.sha256()
     with tempfile.TemporaryFile() as err:
-        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err) as proc:
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, env=git_env()) as proc:
             assert proc.stdout is not None
             for chunk in iter(lambda: proc.stdout.read(1 << 20), b""):
                 digest.update(chunk)

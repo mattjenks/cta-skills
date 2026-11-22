@@ -161,3 +161,21 @@ def test_diff_hash_ignores_user_diff_config(tmp_path):
     git(repo, "config", "diff.suppressBlankEmpty", "true")
     git(repo, "config", "diff.relative", "true")
     assert diff_hash(repo, base) == plain
+
+
+def test_diff_hash_ignores_git_environment(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path / "r")
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "a.txt").write_text("a\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "a")
+    other = make_repo(tmp_path / "other")
+    want = diff_hash(repo, base)
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(other / ".git" / "index"))
+    assert diff_hash(repo, base) == want
+    assert findings.toplevel(repo / ".") == findings.toplevel(repo)
+    env = findings.git_env()
+    assert not {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"} & set(env) and env.get("PATH")
+    assert findings.git_env(GIT_INDEX_FILE="/x")["GIT_INDEX_FILE"] == "/x"
