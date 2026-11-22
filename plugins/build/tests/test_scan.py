@@ -140,10 +140,10 @@ def test_fast_scan_normalizes_semgrep_and_gitleaks(tmp_path):
     assert (leak.path, leak.line, leak.message) == ("app.py", 2, "AWS access token")
     # semgrep got staged paths as argv, deletions skipped, no shell
     (sargv,) = run.argv("semgrep")
-    assert sargv[:5] == ["semgrep", "--config", "p/default", "--error", "--json"]
-    assert sorted(sargv[5:]) == ["./app.py", "./new file.py"]
+    assert sargv[:6] == ["semgrep", "--config", "p/default", "--error", "--json", "--disable-nosem"]
+    assert sorted(sargv[6:]) == ["./app.py", "./new file.py"]
     (gargv,) = run.argv("gitleaks")
-    assert "--staged" in gargv and "json" in gargv and "--redact" in gargv
+    assert gargv[1] == "dir" and "json" in gargv and "--redact" in gargv
     assert "-" not in gargv[gargv.index("--report-path") + 1:][:1]
 
 
@@ -230,8 +230,10 @@ def test_full_scan_uses_osv_without_npm(tmp_path):
     assert dep.path == "package-lock.json" and "left-pad" in dep.message
     # semgrep was handed only the branch diff files
     (sargv,) = run.argv("semgrep")
-    assert sorted(sargv[5:]) == ["./app.js", "./package-lock.json", "./package.json"]
-    assert "--log-opts=main..HEAD" in run.argv("gitleaks")[0]
+    assert sorted(sargv[6:]) == ["./app.js", "./package-lock.json", "./package.json"]
+    gl_argv = run.argv("gitleaks")[0]
+    assert gl_argv[1] == "git" and f"--log-opts={base}..{git(repo, 'rev-parse', 'HEAD')}" in gl_argv
+    assert Path(gl_argv[-1]) != repo
 
 
 def test_full_scan_uses_npm_and_pip_audit(tmp_path):
@@ -282,6 +284,8 @@ def test_scanner_failure_is_not_no_findings(tmp_path):
 
 def test_scanner_not_installed_raises(tmp_path):
     repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "a.py").write_text("1\n")
+    git(repo, "add", "a.py")
 
     def run(argv, **kw):
         if argv[0] == "git":
@@ -290,7 +294,7 @@ def test_scanner_not_installed_raises(tmp_path):
 
     with pytest.raises(ScanError) as ei:
         scan.fast_scan(repo, staged=True, run=run)
-    assert ei.value.tool == "gitleaks"  # gitleaks needs no staged paths, runs first
+    assert ei.value.tool == "semgrep" and "not installed" in str(ei.value)
 
 
 # ---------------------------------------------------------------- fix round 1
@@ -309,7 +313,7 @@ def test_fast_scan_scans_staged_content_not_working_tree(tmp_path):
 
     def semgrep(argv, kw):
         root = Path(kw["cwd"])
-        for a in argv[5:]:
+        for a in argv[6:]:
             seen[a] = (root / a).read_text()
         return CLEAN
 
@@ -361,7 +365,7 @@ def test_dash_leading_file_name_is_scanned_not_an_option(tmp_path):
     run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
     scan.fast_scan(repo, run=run)
     (sargv,) = run.argv("semgrep")
-    assert sargv[5:] == ["./--exclude=*.py"]
+    assert sargv[6:] == ["./--exclude=*.py"]
 
 
 def test_non_utf8_name_never_an_uncaught_exception(tmp_path):
@@ -410,6 +414,8 @@ def test_exit_one_without_findings_is_an_error(tmp_path):
 
 def test_gitleaks_report_goes_to_a_temp_file_that_is_removed(tmp_path):
     repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "b.md").write_text("b\n")
+    git(repo, "add", "b.md")
     paths = []
 
     def leaks(argv, kw):
@@ -418,7 +424,7 @@ def test_gitleaks_report_goes_to_a_temp_file_that_is_removed(tmp_path):
         p.write_text("[]")
         return cp("", 0)
 
-    scan.fast_scan(repo, run=FakeRun({"gitleaks": leaks}))
+    scan.fast_scan(repo, run=FakeRun({"semgrep": CLEAN, "gitleaks": leaks}))
     assert paths and paths[0].name != "-" and not paths[0].exists()
 
 
@@ -522,7 +528,7 @@ def test_subdirectory_repo_resolves_to_top_level(tmp_path):
     seen = {}
 
     def semgrep(argv, kw):
-        seen["args"] = sorted(argv[5:])
+        seen["args"] = sorted(argv[6:])
         return CLEAN
 
     run = audit_run(semgrep=semgrep)
@@ -533,16 +539,18 @@ def test_subdirectory_repo_resolves_to_top_level(tmp_path):
     git(repo, "add", "x.py")
     run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
     scan.fast_scan(repo / "pkg", run=run)
-    assert run.argv("semgrep")[0][5:] == ["./x.py"]
+    assert run.argv("semgrep")[0][6:] == ["./x.py"]
     from findings import diff_hash
     assert diff_hash(repo / "pkg", base) == diff_hash(repo, base)
 
 
 def test_gitleaks_exit_zero_without_report_is_error(tmp_path):
     repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    (repo / "b.md").write_text("b\n")
+    git(repo, "add", "b.md")
     for answer in (lambda argv, kw: cp("", 0), gl(""), gl("null")):
         with pytest.raises(ScanError) as ei:
-            scan.fast_scan(repo, run=FakeRun({"gitleaks": answer}))
+            scan.fast_scan(repo, run=FakeRun({"semgrep": CLEAN, "gitleaks": answer}))
         assert ei.value.tool == "gitleaks"
 
 
@@ -580,7 +588,7 @@ def test_nested_ignore_files_removed_and_ignore_dir_is_error(tmp_path):
         seen["ignores"] = sorted(str(p.relative_to(root)) for p in root.rglob("*")
                                  if p.name in (".semgrepignore", ".gitignore") and p.is_file())
         seen["root_ignore"] = (root / ".semgrepignore").read_text()
-        seen["args"] = argv[5:]
+        seen["args"] = argv[6:]
         return CLEAN
 
     scan.fast_scan(repo, run=FakeRun({"semgrep": semgrep, "gitleaks": gl("[]")}))
@@ -599,15 +607,17 @@ def test_nested_ignore_files_removed_and_ignore_dir_is_error(tmp_path):
 def test_skipped_binary_and_symlink_are_findings(tmp_path):
     repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
     (repo / "img.png").write_bytes(b"\x89PNG\x00\x01")
+    (repo / "blob.dat").write_bytes(b"a\x00b")
     (repo / "ln.py").symlink_to("README.md")
     (repo / "ok.py").write_text("1\n")
     git(repo, "add", ".")
     run = FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")})
     out = scan.fast_scan(repo, run=run)
     rules = {f.rule: f for f in out}
-    assert rules["scan.skipped-binary:img.png"].severity == "high"
-    assert rules["scan.skipped-symlink:ln.py"].path == "ln.py"
-    assert run.argv("semgrep")[0][5:] == ["./ok.py"]
+    assert rules["scan.skipped-binary:img.png"].severity == "info"  # known media type
+    assert rules["scan.skipped-symlink:ln.py"].severity == "info"
+    assert rules["scan.skipped-binary:blob.dat"].severity == "high"  # NUL in an unknown type
+    assert run.argv("semgrep")[0][6:] == ["./ok.py"]
 
 
 def test_gitleaks_uses_bundled_config_and_flags_config_changes(tmp_path):
@@ -647,3 +657,109 @@ def test_npm_error_message_not_from_stdout(tmp_path):
     with pytest.raises(ScanError) as ei:
         scan.full_scan(repo, "main", run=audit_run(npm=npm), which=lambda n: "/b")
     assert SECRET not in str(ei.value) and "exit 1" in str(ei.value)
+
+
+# ---------------------------------------------------------------- fix round 3
+
+def test_gitleaks_never_uses_the_working_tree_as_source(tmp_path):
+    repo, base = full_repo(tmp_path, {"a.txt": "1\n"})
+    (repo / ".gitleaksignore").write_text("anything\n")  # untracked: must not be seen
+    sources = []
+
+    def leaks(argv, kw):
+        src = Path(argv[-1])
+        sources.append((src, sorted(p.name for p in src.rglob(".gitleaksignore")), (src / "b.txt").exists(), (src / "a.txt").exists()))
+        Path(argv[argv.index("--report-path") + 1]).write_text("[]")
+        return cp("", 0)
+
+    scan.full_scan(repo, "main", run=audit_run(gitleaks=leaks), which=lambda n: None)
+    (src, ignores, _b, has_a), = sources
+    assert src != repo and not str(src).startswith(str(repo)) and ignores == []
+    assert not has_a  # --no-checkout: no working tree files
+    # fast scan: staged .gitleaksignore is removed from the export gitleaks reads
+    (repo / "b.txt").write_text("b\n")
+    git(repo, "add", "-f", "b.txt", ".gitleaksignore")
+    sources.clear()
+    scan.fast_scan(repo, run=audit_run(gitleaks=leaks))
+    (src, ignores, has_b, _a), = sources
+    assert src != repo and ignores == [] and has_b
+
+
+def test_semgrep_disable_nosem():
+    assert "--disable-nosem" in scan.SCANNERS["semgrep"]
+
+
+def test_pip_audit_dot_only_with_project_table(tmp_path):
+    repo, _ = full_repo(tmp_path, {"pyproject.toml": "[tool.x]\na = 1\n"})
+    run = audit_run()
+    out = scan.full_scan(repo, "main", run=run, which=lambda n: None)
+    assert run.argv("pip-audit") == []
+    assert not_audited(out) == ["pyproject.toml"]
+    repo2, _ = full_repo(tmp_path / "two", {"pyproject.toml": "[project]\nname='x'\n"})
+    run = audit_run()
+    out = scan.full_scan(repo2, "main", run=run, which=lambda n: None)
+    assert run.argv("pip-audit")[0][-1] == "."
+    assert not_audited(out) == []
+
+
+def test_lockfiles_not_covered_by_pip_audit(tmp_path):
+    repo, _ = full_repo(tmp_path, {"pyproject.toml": "[tool.x]\n", "uv.lock": "v\n",
+                                    "poetry.lock": "v\n", "pdm.lock": "v\n"})
+    out = scan.full_scan(repo, "main", run=audit_run(), which=lambda n: None if n == "osv-scanner" else "/b")
+    assert not_audited(out) == ["pdm.lock", "poetry.lock", "pyproject.toml", "uv.lock"]
+    run = audit_run()
+    out = scan.full_scan(repo, "main", run=run, which=lambda n: "/b")
+    assert not_audited(out) == [] and run.argv("pip-audit") == [] and len(run.argv("osv-scanner")) == 1
+
+
+def test_unrecognised_manifests_are_reported_or_covered(tmp_path):
+    files = {"package.json": "{}\n", "Gemfile": "g\n", "Cargo.toml": "c\n", "composer.json": "{}\n",
+             "build.gradle": "x\n", "build.gradle.kts": "x\n", "Pipfile": "p\n",
+             "pom.xml": "<p/>\n", "Cargo.lock": "l\n", "composer.lock": "{}\n",
+             "Requirements-Dev.TXT": "a==1\n", "requirements.in": "a\n", "sub": None}
+    files.pop("sub")
+    repo, _ = full_repo(tmp_path, files)
+    out = scan.full_scan(repo, "main", run=audit_run(), which=lambda n: "/b")
+    # package.json/Gemfile/Pipfile have no lock; gradle has no lockfile; Cargo.toml/composer.json covered
+    assert not_audited(out) == ["Gemfile", "Pipfile", "build.gradle", "build.gradle.kts", "package.json"]
+    run = audit_run()
+    scan.full_scan(repo, "main", run=run, which=lambda n: "/b")
+    assert any("Requirements-Dev.TXT" in a for a in run.argv("pip-audit")[0])  # case-insensitive
+    # without osv-scanner the osv-only manifests are reported too
+    out = scan.full_scan(repo, "main", run=audit_run(), which=lambda n: None if n == "osv-scanner" else "/b")
+    assert {"Cargo.lock", "composer.lock", "pom.xml"} <= set(not_audited(out))
+
+
+def test_symlinked_manifest_not_followed(tmp_path):
+    repo, _ = full_repo(tmp_path, {"notes.md": "1\n"})
+    (repo / "requirements.txt").symlink_to("/etc/hosts")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "link")
+    run = audit_run()
+    out = scan.full_scan(repo, "main", run=run, which=lambda n: "/b")
+    assert run.argv("pip-audit") == []
+    assert not_audited(out) == ["requirements.txt"]
+
+
+def test_skipped_other_for_submodule_gitlink(tmp_path):
+    repo = make_repo(tmp_path / "r", {"README.md": "x\n"})
+    head = git(repo, "rev-parse", "HEAD")
+    git(repo, "update-index", "--add", "--cacheinfo", f"160000,{head},vendor/lib")
+    out = scan.fast_scan(repo, run=FakeRun({"semgrep": CLEAN, "gitleaks": gl("[]")}))
+    (f,) = [f for f in out if f.rule.startswith("scan.skipped-other")]
+    assert (f.severity, f.path) == ("info", "vendor/lib")
+
+
+def test_requirements_findings_name_their_file(tmp_path):
+    repo, _ = full_repo(tmp_path, {"requirements.txt": "a==1\n", "requirements-dev.txt": "b==1\n"})
+
+    def pip(argv, kw):
+        name = argv[argv.index("-r") + 1]
+        vid = "V-" + name
+        return cp(json.dumps({"dependencies": [{"name": "x", "version": "1",
+                  "vulns": [{"id": vid, "description": "d"}]}]}), 1)
+
+    out = scan.full_scan(repo, "main", run=audit_run(**{"pip-audit": pip}), which=lambda n: None)
+    got = {(f.rule, f.path) for f in out if f.tool == "pip-audit"}
+    assert got == {("V-requirements.txt", "requirements.txt"),
+                   ("V-requirements-dev.txt", "requirements-dev.txt")}

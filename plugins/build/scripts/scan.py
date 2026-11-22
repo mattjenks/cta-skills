@@ -24,29 +24,43 @@ unscanned file is visible and must be closed by a person. Error text never
 includes stdout (it can hold matched source); only stderr or a fixed string.
 
 Dependency audits: every recognized manifest or lockfile at ANY depth of the
-scanned tree is accounted for. pip-audit covers every requirements file and a
-root pyproject.toml/uv.lock/poetry.lock; `npm audit` covers a root npm lock;
-`osv-scanner -r` covers the rest it can read (requirements.txt, poetry.lock,
-uv.lock, Pipfile.lock, npm/yarn/pnpm locks, go.mod, Gemfile.lock, Cargo.lock).
-A manifest no available tool covers (e.g. setup.py, Pipfile, a nested
-pyproject.toml, or any when osv-scanner is absent) becomes a `high` finding
-`audit.not-audited:<path>`; a covering tool that fails raises ScanError.
+scanned tree is accounted for, each covered only by an auditor that reads it:
+  pip-audit      each requirements*.txt (case-insensitive, or any .txt in a
+                 requirements/ dir), one run per file; a root pyproject.toml that
+                 has a `[project]` table (`pip-audit .`; pip-audit errors without one)
+  npm audit      a root package-lock.json / npm-shrinkwrap.json
+  osv-scanner -r requirements.txt, poetry/uv/pdm/Pipfile/package/npm-shrinkwrap/
+                 yarn/pnpm/Cargo/composer/Gemfile locks, go.mod, pom.xml,
+                 gradle.lockfile (pdm.lock and uv.lock support is from memory of
+                 osv-scanner's docs, unverified)
+Lockfiles are never "covered" by pip-audit. A source manifest (package.json,
+pyproject.toml, Gemfile, Cargo.toml, composer.json, Pipfile, build.gradle*,
+requirements.in) is covered when a covered lockfile sits in its directory or an
+ancestor. Everything else (setup.py, a lone Cargo.toml, any manifest when osv-scanner
+is missing) becomes a `high` finding `audit.not-audited:<path>`. Symlinks are
+removed from the export before any audit runs; a symlinked manifest is reported
+as not audited. A covering tool that fails raises ScanError.
 
-Not scanned but reported: binary files (NUL in the first 8 KB, which includes
-UTF-16 text) and symlinks become `high` findings `scan.skipped-binary:<path>` /
-`scan.skipped-symlink:<path>`. `.gitignore`/`.semgrepignore` files are removed
-from the export (any depth) and not scanned themselves.
+Not scanned but reported: NUL-containing files (this includes UTF-16 text) are
+`high` `scan.skipped-binary:<path>`; known media/archive/font extensions are
+`info` with the same rule; symlinks are `info` `scan.skipped-symlink:<path>`;
+other non-regular entries (submodule gitlinks) are `info` `scan.skipped-other:<path>`.
+`.gitignore`/`.semgrepignore`/`.gitleaksignore`/`.gitleaks.toml` files are removed
+from the export (any depth). Semgrep runs with `--disable-nosem` so inline
+`nosemgrep` comments in the repository cannot hide findings.
 
-gitleaks runs with the bundled `gitleaks.toml` (`--config` outranks a repo's own
-.gitleaks.toml; it extends the default rules), `--gitleaks-ignore-path` pointing
-at an empty dir (so a repo `.gitleaksignore` is not read) and
-`--ignore-gitleaks-allow`. A changed `.gitleaks.toml`/`.gitleaksignore` in the
-scanned diff is a `high` finding `gitleaks.config-changed`. Verified against the
-gitleaks README: flags --config, --gitleaks-ignore-path, --ignore-gitleaks-allow
-exist; config order is flag, GITLEAKS_CONFIG, GITLEAKS_CONFIG_TOML, repo
-.gitleaks.toml; there is no --no-config flag; `[extend] useDefault = true` is the
-documented way to extend defaults. gitleaks always writes its report ("[]" when
-clean); a missing or empty report is a ScanError.
+gitleaks never uses the user's working tree as its source, because it reads
+`<source>/.gitleaksignore` regardless of --config. fast_scan runs `gitleaks dir`
+over the index export (ignore/config files deleted); full_scan runs `gitleaks git`
+with `--log-opts=<base-sha>..<head-sha>` in a throwaway `git clone --no-checkout
+--no-local`. Both use the bundled `gitleaks.toml` (`--config` outranks a repo's own
+.gitleaks.toml; it extends the default rules), `--gitleaks-ignore-path` at an empty
+dir and `--ignore-gitleaks-allow`. A changed `.gitleaks.toml`/`.gitleaksignore` in the
+scanned diff is a `high` finding `gitleaks.config-changed`. From the gitleaks
+README: flags --config, --gitleaks-ignore-path, --ignore-gitleaks-allow exist; config
+order is flag, GITLEAKS_CONFIG, GITLEAKS_CONFIG_TOML, repo .gitleaks.toml; no
+--no-config flag; `[extend] useDefault = true` extends the defaults. gitleaks always
+writes its report ("[]" when clean); a missing or empty report is a ScanError.
 
 The git top-level of `repo` is resolved first (a subdirectory is never scanned alone).
 
@@ -66,12 +80,13 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
 
 from findings import Finding, check_ref, toplevel
 
 SCANNERS = {
-    "semgrep": ["semgrep", "--config", "p/default", "--error", "--json"],
+    "semgrep": ["semgrep", "--config", "p/default", "--error", "--json", "--disable-nosem"],
     "gitleaks": [
         "gitleaks", "git", "--report-format", "json", "--redact", "--no-banner", "--no-color",
         "--ignore-gitleaks-allow",
@@ -96,10 +111,6 @@ _MANIFEST = {
     "go.mod": "go", "go.sum": "go",
     "Gemfile": "ruby", "Gemfile.lock": "ruby",
 }
-_PY_MANIFESTS = ("pyproject.toml", "uv.lock", "poetry.lock")
-_NPM_LOCKS = ("package-lock.json", "npm-shrinkwrap.json")
-_OTHER_NODE_LOCKS = ("yarn.lock", "pnpm-lock.yaml")
-_OSV_MANIFESTS = ("go.mod", "Gemfile.lock")
 
 _SEVERITY = {
     "critical": "critical", "high": "high", "error": "high",
@@ -109,14 +120,37 @@ _SEVERITY = {
 _STDERR_TAIL = 2000
 GITLEAKS_CONFIG = Path(__file__).resolve().parent / "gitleaks.toml"
 _GITLEAKS_CONFIG_FILES = (".gitleaks.toml", ".gitleaksignore")
-_IGNORE_FILES = (".semgrepignore", ".gitignore")
+_IGNORE_FILES = (".semgrepignore", ".gitignore", ".gitleaksignore", ".gitleaks.toml")
 _REQ_DIRS = ("requirements", "reqs")
-# manifests osv-scanner reads (requirements.txt by exact name)
-_OSV_READS = ("requirements.txt", "poetry.lock", "uv.lock", "Pipfile.lock", "package-lock.json",
+_MEDIA_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".woff",
+              ".woff2", ".ttf", ".otf", ".mp4", ".mov", ".mp3", ".wav"}
+# lockfiles / manifests osv-scanner reads
+_OSV_READS = {"poetry.lock", "uv.lock", "pdm.lock", "Pipfile.lock", "package-lock.json",
               "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "go.mod", "Gemfile.lock",
-              "Cargo.lock")
-_OTHER_MANIFESTS = ("pyproject.toml", "setup.py", "Pipfile")
-_PY_PROJECT_ROOT = ("pyproject.toml", "uv.lock", "poetry.lock")
+              "Cargo.lock", "composer.lock", "pom.xml", "gradle.lockfile",
+              "buildscript-gradle.lockfile", "requirements.txt"}
+_NPM_LOCKS = ("package-lock.json", "npm-shrinkwrap.json")
+# source manifest -> lockfiles that make it covered (same dir or an ancestor)
+_COMPANIONS = {
+    "package.json": ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml"),
+    "pyproject.toml": ("uv.lock", "poetry.lock", "pdm.lock"),
+    "Gemfile": ("Gemfile.lock",),
+    "Cargo.toml": ("Cargo.lock",),
+    "composer.json": ("composer.lock",),
+    "Pipfile": ("Pipfile.lock",),
+    "build.gradle": ("gradle.lockfile",),
+    "build.gradle.kts": ("gradle.lockfile",),
+}
+_OTHER_MANIFESTS = {"setup.py", "setup.cfg"} | set(_COMPANIONS)
+
+_SEVERITY = {
+    "critical": "critical", "high": "high", "error": "high",
+    "moderate": "medium", "medium": "medium", "warning": "medium",
+    "low": "low", "info": "info", "informational": "info", "note": "info",
+}
+_STDERR_TAIL = 2000
+GITLEAKS_CONFIG = Path(__file__).resolve().parent / "gitleaks.toml"
+_GITLEAKS_CONFIG_FILES = (".gitleaks.toml", ".gitleaksignore")
 
 
 class ScanError(Exception):
@@ -170,8 +204,8 @@ def _git(repo: Path, args: list[str], run, input: bytes | None = None, env: dict
     return proc.stdout if isinstance(proc.stdout, bytes) else (proc.stdout or "").encode()
 
 
-def _top(repo: Path, run) -> Path:
-    out = _git(repo, ["rev-parse", "--show-toplevel"], run)
+def _toplevel(repo: Path, run) -> Path:
+    out = _git(Path(repo), ["rev-parse", "--show-toplevel"], run)
     return Path(os.fsdecode(out.rstrip(b"\n")))
 
 
@@ -180,14 +214,14 @@ def _names(out: bytes) -> list[bytes]:
 
 
 def _export(repo: Path, dest: Path, run, names: list[bytes] | None, env: dict | None = None) -> None:
-    """Write index blobs (all, or `names`) under dest, then neutralise ignore files."""
+    """Write index blobs (all, or `names`) under dest, then neutralise ignore/config files."""
     prefix = f"--prefix={dest}/"
     if names is None:
         _git(repo, ["checkout-index", "-a", prefix], run, env=env)
     elif names:
         _git(repo, ["checkout-index", prefix, "--stdin", "-z"], run,
              input=b"\0".join(names) + b"\0", env=env)
-    for dirpath, dirnames, filenames in os.walk(dest):
+    for dirpath, _dirs, filenames in os.walk(dest):
         for fn in filenames:
             if fn in _IGNORE_FILES:
                 try:
@@ -200,9 +234,21 @@ def _export(repo: Path, dest: Path, run, names: list[bytes] | None, env: dict | 
     root_ignore.write_text("")
 
 
-def _skip(kind: str, rel: str) -> Finding:
-    return Finding.create("scan", f"scan.skipped-{kind}:{rel}", rel, 0, "high",
-                          f"{rel} was not scanned ({kind})")
+def _remove_symlinks(root: Path) -> list[str]:
+    """Delete every symlink in the export (tools must not follow them); return their paths."""
+    removed = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        for name in [*dirnames, *filenames]:
+            full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                os.unlink(full)
+                removed.append(os.path.relpath(full, root))
+    return sorted(removed)
+
+
+def _skip(kind: str, rel: str, severity: str, why: str) -> Finding:
+    return Finding.create("scan", f"scan.skipped-{kind}:{rel}", rel, 0, severity,
+                          f"{rel} was not scanned: {why}")
 
 
 def _scannable(root: Path, names: list[bytes]) -> tuple[list[str], list[Finding]]:
@@ -216,16 +262,21 @@ def _scannable(root: Path, names: list[bytes]) -> tuple[list[str], list[Finding]
         fp = root / rel
         try:
             if fp.is_symlink():
-                skipped.append(_skip("symlink", rel))
+                skipped.append(_skip("symlink", rel, "info", "symlink"))
                 continue
             if not fp.is_file():
+                skipped.append(_skip("other", rel, "info", "not a regular file (e.g. a submodule)"))
                 continue
             with open(fp, "rb") as fh:
-                if b"\0" in fh.read(8192):
-                    skipped.append(_skip("binary", rel))
-                    continue
+                has_nul = b"\0" in fh.read(8192)
         except OSError:
-            skipped.append(_skip("unreadable", rel))
+            skipped.append(_skip("other", rel, "info", "unreadable"))
+            continue
+        if has_nul:
+            if os.path.splitext(rel)[1].lower() in _MEDIA_EXT:
+                skipped.append(_skip("binary", rel, "info", "known binary media/archive type"))
+            else:
+                skipped.append(_skip("binary", rel, "high", "contains NUL bytes (binary or UTF-16)"))
             continue
         keep.append("./" + rel)
     return keep, skipped
@@ -235,7 +286,7 @@ def _config_changed(names: list[bytes]) -> list[Finding]:
     return [
         Finding.create("gitleaks", "gitleaks.config-changed", os.fsdecode(n), 0, "high",
                        "gitleaks configuration or ignore file changed in the scanned diff")
-        for n in names if os.path.basename(os.fsdecode(n)) in _GITLEAKS_CONFIG_FILES
+        for n in names if os.path.basename(os.fsdecode(n)) in (".gitleaks.toml", ".gitleaksignore")
     ]
 
 
@@ -263,9 +314,10 @@ def _json(tool: str, proc):
 
 
 def _clean_path(path: str, root: Path) -> str:
-    prefix = str(root) + "/"
-    if path.startswith(prefix):
-        path = path[len(prefix):]
+    for base in (str(root), str(root.resolve())):
+        if path.startswith(base + "/"):
+            path = path[len(base) + 1:]
+            break
     while path.startswith("./"):
         path = path[2:]
     return path
@@ -303,19 +355,24 @@ def _semgrep(root: Path, paths: list[str], run) -> list[Finding]:
     return found
 
 
-def _gitleaks(repo: Path, run, log_opts: str | None = None) -> list[Finding]:
+def _gitleaks(mode: str, source: Path, run, log_opts: str | None = None,
+              strip: Path | None = None) -> list[Finding]:
+    """`gitleaks dir <export>` (mode "dir") or `gitleaks git` in a throwaway clone (mode "git").
+
+    `source` is never the user's working tree: gitleaks would read its .gitleaksignore.
+    """
     with tempfile.TemporaryDirectory(prefix="cta-gitleaks-") as tmp:
         report = Path(tmp) / "report.json"  # not pre-created: unwritten means failure
         empty = Path(tmp) / "no-ignore"
         empty.mkdir()
-        argv = [*SCANNERS["gitleaks"], "--config", str(GITLEAKS_CONFIG),
-                "--gitleaks-ignore-path", str(empty), "--report-path", str(report)]
+        argv = list(SCANNERS["gitleaks"])
+        argv[1] = mode
+        argv += ["--config", str(GITLEAKS_CONFIG), "--gitleaks-ignore-path", str(empty),
+                 "--report-path", str(report)]
         if log_opts:
             argv.append(f"--log-opts={log_opts}")
-        else:
-            argv.append("--staged")
-        argv.append(str(repo))
-        proc = _run("gitleaks", argv, repo, run)
+        argv.append(str(source))
+        proc = _run("gitleaks", argv, source, run)
         try:
             text = report.read_text().strip()
         except FileNotFoundError:
@@ -332,51 +389,65 @@ def _gitleaks(repo: Path, run, log_opts: str | None = None) -> list[Finding]:
         raise ScanError("gitleaks", proc.stderr or "exit status 1 with no findings")
     # Only rule, file, line and the rule description are read: Secret/Match are dropped.
     return [
-        Finding.create("gitleaks", r.get("RuleID", "unknown"), r.get("File", ""),
+        Finding.create("gitleaks", r.get("RuleID", "unknown"),
+                       _clean_path(r.get("File", ""), strip) if strip else r.get("File", ""),
                        r.get("StartLine", 0), "high", r.get("Description", ""))
         for r in data
     ]
 
 
-def _toplevel(repo: Path, run) -> Path:
-    try:
-        return _top(Path(repo), run)
-    except ScanError:
-        raise
-    except Exception as exc:  # pragma: no cover
-        raise ScanError("git", str(exc)) from None
-
-
 def fast_scan(repo: Path, staged: bool = True, run=subprocess.run) -> list[Finding]:
-    """Pre-commit scan: semgrep on the staged content plus gitleaks over the staged diff."""
+    """Pre-commit scan of the STAGED content: semgrep and `gitleaks dir` over the index export."""
     if not staged:
         raise ValueError("fast_scan scans staged changes only; use full_scan for a branch")
     repo = _toplevel(repo, run)
     names = _names(_git(repo, ["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT"], run))
+    if not names:
+        return []
     found: list[Finding] = _config_changed(names)
-    if names:
-        with tempfile.TemporaryDirectory(prefix="cta-staged-") as tmp:
-            root = Path(tmp)
-            _export(repo, root, run, names)
-            paths, skipped = _scannable(root, names)
-            found += skipped
-            found += _semgrep(root, paths, run)
-    return [*found, *_gitleaks(repo, run)]
+    with tempfile.TemporaryDirectory(prefix="cta-staged-") as tmp:
+        root = Path(tmp)
+        _export(repo, root, run, names)
+        paths, skipped = _scannable(root, names)
+        found += skipped
+        _remove_symlinks(root)
+        found += _semgrep(root, paths, run)
+        found += _gitleaks("dir", root, run, strip=root)
+    return found
 
 
 # ------------------------------------------------------------ dependency audits
 
+def _is_requirements(rel: str) -> bool:
+    fn = os.path.basename(rel).lower()
+    parent = os.path.basename(os.path.dirname(rel)).lower()
+    return fn.endswith(".txt") and (fn.startswith("requirements") or parent in _REQ_DIRS)
+
+
+def _is_manifest(rel: str) -> bool:
+    fn = os.path.basename(rel)
+    low = fn.lower()
+    parent = os.path.basename(os.path.dirname(rel)).lower()
+    return (_is_requirements(rel) or fn in _OSV_READS or fn in _OTHER_MANIFESTS
+            or (low.endswith(".in") and (low.startswith("requirements") or parent in _REQ_DIRS)))
+
+
 def _manifests(root: Path) -> list[str]:
-    """Relative paths of every recognized manifest or lockfile in the tree."""
     found = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort()
-        parent = os.path.basename(dirpath)
         for fn in sorted(filenames):
-            is_req = fn.endswith(".txt") and (fn.startswith("requirements") or parent in _REQ_DIRS)
-            if is_req or fn in _OSV_READS or fn in _OTHER_MANIFESTS:
-                found.append(os.path.relpath(os.path.join(dirpath, fn), root))
+            rel = os.path.relpath(os.path.join(dirpath, fn), root)
+            if _is_manifest(rel):
+                found.append(rel)
     return sorted(found)
+
+
+def _has_project_table(path: Path) -> bool:
+    try:
+        return "project" in tomllib.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
 
 
 def _pip_audit_run(root: Path, extra: list[str], manifest: str, run) -> list[Finding]:
@@ -435,56 +506,93 @@ def _osv(root: Path, run) -> list[Finding]:
     return found
 
 
-def _dependency_audit(root: Path, run, which) -> list[Finding]:
+def _companion_covered(rel: str, covered: set[str]) -> bool:
+    """A source manifest is covered by a covered lockfile in its directory or an ancestor."""
+    fn = os.path.basename(rel)
+    if fn in _COMPANIONS:
+        wanted = _COMPANIONS[fn]
+    elif fn.lower().endswith(".in"):  # requirements.in: a covered requirements*.txt beside it
+        d = os.path.dirname(rel)
+        return any(_is_requirements(c) and os.path.dirname(c) == d for c in covered)
+    else:
+        return False
+    d = os.path.dirname(rel)
+    while True:
+        if any(os.path.join(d, w) in covered or (not d and w in covered) for w in wanted):
+            return True
+        if not d:
+            return False
+        d = os.path.dirname(d)
+
+
+def _dependency_audit(root: Path, run, which, linked: list[str]) -> list[Finding]:
     found: list[Finding] = []
     manifests = _manifests(root)
     covered: set[str] = set()
-    reqs = [m for m in manifests if m.endswith(".txt")]
-    if reqs:
-        argv = []
-        for r in reqs:
-            argv += ["-r", r]
-        found += _pip_audit_run(root, argv, reqs[0], run)
-        covered.update(reqs)
-    project = [m for m in _PY_PROJECT_ROOT if (root / m).is_file()]
-    if project:
-        found += _pip_audit_run(root, ["."], project[0], run)
-        covered.update(project)
-    npm_locks = [m for m in _NPM_LOCKS if (root / m).is_file()]
-    if npm_locks and which("npm"):
+    for rel in manifests:
+        if _is_requirements(rel):  # one run per file so findings name their file
+            found += _pip_audit_run(root, ["-r", rel], rel, run)
+            covered.add(rel)
+    if _has_project_table(root / "pyproject.toml"):
+        found += _pip_audit_run(root, ["."], "pyproject.toml", run)
+        covered.add("pyproject.toml")
+    if which("npm") and any(m in _NPM_LOCKS for m in manifests):
         found += _npm_audit(root, run)
-        covered.update(npm_locks)
+        covered.update(m for m in manifests if m in _NPM_LOCKS)
     osv_reads = [m for m in manifests if os.path.basename(m) in _OSV_READS]
     if osv_reads and which("osv-scanner"):
         found += _osv(root, run)
         covered.update(osv_reads)
-    for m in manifests:
-        if m not in covered:
-            found.append(Finding.create("audit", f"audit.not-audited:{m}", m, 0, "high",
-                                        f"{m} is not covered by any available dependency auditor"))
+    uncovered = [m for m in manifests if m not in covered and not _companion_covered(m, covered)]
+    uncovered += [m for m in linked if _is_manifest(m)]  # symlinked manifests are never followed
+    for m in sorted(set(uncovered)):
+        found.append(Finding.create("audit", f"audit.not-audited:{m}", m, 0, "high",
+                                    f"{m} is not covered by any available dependency auditor"))
     return found
+
+
+# ------------------------------------------------------------ full scan
+
+def _resolve(repo: Path, ref: str, run) -> str:
+    return _git(repo, ["rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}"], run).decode().strip()
+
+
+def _clone_for_history(repo: Path, dest: Path, shas: list[str], run) -> None:
+    """A checkout-less copy of the history: no working tree, so no .gitleaksignore."""
+    proc = run(["git", "clone", "--quiet", "--no-checkout", "--no-local", str(repo), str(dest)],
+               capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise ScanError("git", proc.stderr)
+    for sha in shas:
+        have = run(["git", "-C", str(dest), "cat-file", "-e", f"{sha}^{{commit}}"], capture_output=True)
+        if have.returncode != 0:  # e.g. a detached HEAD not reachable from any branch
+            _git(dest, ["fetch", "--quiet", "--no-tags", str(repo), sha], run)
 
 
 def full_scan(repo: Path, base: str, run=subprocess.run, which=shutil.which,
               head: str = "HEAD") -> list[Finding]:
     """Branch scan of the committed `head` tree: semgrep on the diff's files, gitleaks over
-    base..head, and the dependency audit of every manifest in the tree."""
+    base..head in a throwaway clone, and the dependency audit of every manifest in the tree."""
     check_ref(base)
     check_ref(head)
     repo = _toplevel(repo, run)
+    base_sha, head_sha = _resolve(repo, base, run), _resolve(repo, head, run)
     names = _names(_git(repo, ["diff", "--name-only", "-z", "--diff-filter=ACMRT",
-                               f"{base}..{head}"], run))
+                               f"{base_sha}..{head_sha}"], run))
     found: list[Finding] = _config_changed(names)
     with tempfile.TemporaryDirectory(prefix="cta-tree-") as tmp:
         tmp_path = Path(tmp)
         root = tmp_path / "tree"
         root.mkdir()
         env = {**os.environ, "GIT_INDEX_FILE": str(tmp_path / "index")}
-        _git(repo, ["read-tree", head], run, env=env)
+        _git(repo, ["read-tree", head_sha], run, env=env)
         _export(repo, root, run, None, env=env)
         paths, skipped = _scannable(root, names)
         found += skipped
+        linked = _remove_symlinks(root)
         found += _semgrep(root, paths, run)
-        found += _gitleaks(repo, run, log_opts=f"{base}..{head}")
-        found += _dependency_audit(root, run, which)
+        clone = tmp_path / "history"
+        _clone_for_history(repo, clone, [base_sha, head_sha], run)
+        found += _gitleaks("git", clone, run, log_opts=f"{base_sha}..{head_sha}")
+        found += _dependency_audit(root, run, which, linked)
     return found
