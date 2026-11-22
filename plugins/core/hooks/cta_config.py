@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config/cta/config.toml"
@@ -13,6 +13,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_NOTIFY_MIN_SECONDS = 300
 TURN_STALE_SECONDS = 24 * 3600  # a recorded turn start older than this is ignored and pruned
 _SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")
+SLUG_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+DEFAULT_PROJECTS_DIR = "projects"
 
 
 def state_dir() -> Path:
@@ -36,6 +38,16 @@ class CtaConfig:
     notify_min_seconds: int = DEFAULT_NOTIFY_MIN_SECONDS
     backup_dir: Path | None = None
     notes: tuple[str, ...] = ()
+    projects_dir: str = DEFAULT_PROJECTS_DIR
+    projects: dict[str, str] = field(default_factory=dict)  # resolved repo path -> slug
+
+
+def project_for_repo(cfg: CtaConfig, repo: Path) -> str | None:
+    """Project slug mapped to `repo` (symlinks resolved), or None."""
+    try:
+        return cfg.projects.get(str(Path(repo).expanduser().resolve()))
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def _path_value(value: object, key: str, notes: list[str]) -> Path | None:
@@ -122,7 +134,37 @@ def load_config(path: Path | None = None, plugin_root: Path | None = None) -> Ct
     elif telemetry and "backup_dir" in telemetry:
         backup_dir = _path_value(telemetry["backup_dir"], "telemetry.backup_dir", notes)
 
+    projects_dir = DEFAULT_PROJECTS_DIR
+    if "projects_dir" in data:
+        value = data["projects_dir"]
+        if isinstance(value, str) and value.strip() and not Path(value).is_absolute() and ".." not in Path(value).parts:
+            projects_dir = value
+        else:
+            notes.append("config invalid: projects_dir: must be a relative folder name")
+
+    projects: dict[str, str] = {}
+    table = data.get("projects")
+    if table is not None and not isinstance(table, dict):
+        notes.append("config invalid: projects: must be a table")
+    elif table:
+        for key, slug in table.items():
+            label = f"projects.{key}"
+            if not isinstance(slug, str):
+                notes.append(f"config invalid: {label}: slug must be a string")
+            elif not SLUG_PATTERN.fullmatch(slug):
+                notes.append(f"config invalid: {label}: slug {slug!r} must match [a-z0-9][a-z0-9-]{{0,62}}")
+            else:
+                repo = _path_value(key, label, notes)
+                if repo is None:
+                    continue
+                try:
+                    projects[str(repo.resolve())] = slug
+                except (OSError, RuntimeError, ValueError) as exc:
+                    notes.append(f"config invalid: {label}: cannot resolve path ({exc})")
+
     return CtaConfig(
+        projects_dir=projects_dir,
+        projects=projects,
         persona=persona,
         context=tuple(context),
         kb=kb,
