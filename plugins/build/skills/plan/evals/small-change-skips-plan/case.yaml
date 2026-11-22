@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: small-change-skips-plan
+expected_outcome: |
+  A small classified change skips the plan and goes to implement.

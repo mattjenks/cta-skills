@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: kb-missing-stops
+expected_outcome: |
+  Stop and point to /core:init-kb when no knowledge base is configured; write nothing in the code repo.

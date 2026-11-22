@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: small-change-stops-for-design-approval
+expected_outcome: |
+  Classify small with a reason, write to the project folder in a knowledge-base worktree, stop for approval, push only after.

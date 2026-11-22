@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: backend-scope-reads-only
+expected_outcome: |
+  Orient only on the backend half of the repo; read-only; report with stack, conventions, state.

@@ -381,3 +381,44 @@ def test_clear_pointer_keeps_gate_for_opted_in_repo(tmp_path, kb):
     kbwork.write_pointer(repo, b)
     kbwork.clear_pointer(repo)
     assert gitgate.gate_installed(repo)
+
+
+# --- project subcommand (resolve or record the repo's project) ----------------
+
+
+def run_project(tmp_path, capsys, *extra, config_text=None, repo=None):
+    cfg = tmp_path / "cta.toml"
+    if config_text is not None:
+        cfg.write_text(config_text)
+    repo = repo or (tmp_path / "code")
+    repo.mkdir(exist_ok=True)
+    code = kbwork.main(["project", "--repo", str(repo), "--config", str(cfg), *extra])
+    return code, json.loads(capsys.readouterr().out), cfg, repo
+
+
+def test_project_cli_kb_missing_points_to_init_kb(tmp_path, capsys):
+    code, out, _, _ = run_project(tmp_path, capsys, config_text='notify = 1\n')
+    assert code == 1
+    assert "/core:init-kb" in out["error"]
+
+
+def test_project_cli_unmapped_repo_reports_null_slug(tmp_path, capsys):
+    code, out, _, _ = run_project(tmp_path, capsys, config_text=f'kb = "{tmp_path}"\n')
+    assert code == 0
+    assert out["slug"] is None
+    assert out["kb"] == str(tmp_path)
+    assert out["projects_dir"] == "projects"
+
+
+def test_project_cli_records_then_resolves(tmp_path, capsys):
+    cfg_text = f'kb = "{tmp_path}"\nprojects_dir = "work"\n'
+    code, out, cfg, repo = run_project(tmp_path, capsys, "--slug", "ada-app", config_text=cfg_text)
+    assert code == 0 and out["slug"] == "ada-app" and out["projects_dir"] == "work"
+    assert tomllib.loads(cfg.read_text())["projects"] == {str(repo.resolve()): "ada-app"}
+    code, out, _, _ = run_project(tmp_path, capsys, repo=repo)
+    assert out["slug"] == "ada-app"
+
+
+def test_project_cli_rejects_bad_slug(tmp_path, capsys):
+    code, out, _, _ = run_project(tmp_path, capsys, "--slug", "Bad Slug", config_text=f'kb = "{tmp_path}"\n')
+    assert code == 1 and "slug" in out["error"]

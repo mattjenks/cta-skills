@@ -12,6 +12,7 @@ it removes the gate unless the repo tracks `.cta/security.toml`. Stdlib only.
 CLI (prints JSON):
   kbwork.py open --kb PATH --slug S --topic T [--projects-dir D] [--date YYYY-MM-DD]
                  [--root DIR] [--repo PATH]
+  kbwork.py project --repo PATH [--slug S] [--config PATH]   (resolve, or record with --slug)
   kbwork.py pointer --repo PATH
   kbwork.py close --repo PATH
 """
@@ -393,6 +394,34 @@ def clear_pointer(repo: Path) -> None:
             print(f"warning: commit gate not removed from {repo}: {exc}", file=sys.stderr)
 
 
+def project_info(repo: Path, config: Path | None = None, slug: str | None = None) -> dict:
+    """The knowledge base, projects folder and project slug for `repo`; records `slug` first when given."""
+    path = Path(config) if config else Path(
+        os.environ.get("CTA_CONFIG") or Path.home() / ".config/cta/config.toml"
+    )
+    path = path.expanduser()
+    try:
+        data = tomllib.loads(path.read_text()) if path.exists() else {}
+    except tomllib.TOMLDecodeError as exc:
+        raise KbError(f"{path} is not valid TOML ({exc})") from exc
+    kb = data.get("kb")
+    if not isinstance(kb, str) or not kb.strip():
+        raise KbError(f"`kb` is not set in {path}; run /core:init-kb")
+    if slug is not None:
+        record_project(path, repo, slug)
+        data = tomllib.loads(path.read_text())
+    projects_dir = data.get("projects_dir")
+    if not isinstance(projects_dir, str) or not projects_dir:
+        projects_dir = "projects"
+    mapped = (data.get("projects") or {}).get(str(Path(repo).expanduser().resolve()))
+    return {
+        "kb": str(Path(kb).expanduser()),
+        "projects_dir": projects_dir,
+        "slug": mapped if isinstance(mapped, str) else None,
+        "repo": str(Path(repo).expanduser().resolve()),
+    }
+
+
 # --- CLI ---------------------------------------------------------------------
 
 
@@ -418,6 +447,10 @@ def main(argv: list[str] | None = None) -> int:
     op.add_argument("--date", type=Date.fromisoformat, default=None)
     op.add_argument("--root", type=Path, default=None)
     op.add_argument("--repo", type=Path, default=None, help="write the active-build pointer here")
+    pj = sub.add_parser("project")
+    pj.add_argument("--repo", required=True, type=Path)
+    pj.add_argument("--slug", default=None)
+    pj.add_argument("--config", type=Path, default=None)
     for name in ("pointer", "close"):
         sp = sub.add_parser(name)
         sp.add_argument("--repo", required=True, type=Path)
@@ -432,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.repo:
                 write_pointer(args.repo, build)
             print(json.dumps(_as_json(build)))
+        elif args.cmd == "project":
+            print(json.dumps(project_info(args.repo, args.config, args.slug)))
         elif args.cmd == "pointer":
             build = read_pointer(args.repo)
             print(json.dumps(_as_json(build) if build else None))

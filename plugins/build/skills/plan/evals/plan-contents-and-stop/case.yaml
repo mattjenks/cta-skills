@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: plan-contents-and-stop
+expected_outcome: |
+  The plan has Global Constraints, Review Focus of five items, tasks with Files and Interfaces and a failing test first, then stops for approval.
