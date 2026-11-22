@@ -318,9 +318,23 @@ def close_build(build: Build) -> CloseResult:
 # --- active-build pointer ----------------------------------------------------
 
 
-def _exclude_file(repo: Path) -> Path | None:
-    out = _out(repo, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
-    return Path(out) if out else None
+def exclude_path(repo: Path, entry: str) -> bool:
+    """Idempotently add `entry` to the repo's info/exclude. Warns on stderr and
+    returns False when git cannot say where that file is."""
+    repo = Path(repo)
+    rel = _out(repo, "rev-parse", "--git-path", "info/exclude")
+    if not rel:
+        print(f"warning: could not locate git info/exclude in {repo}; {entry} not excluded", file=sys.stderr)
+        return False
+    exclude = Path(rel)
+    if not exclude.is_absolute():
+        exclude = repo / exclude
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text() if exclude.exists() else ""
+    if entry not in existing.splitlines():
+        sep = "" if not existing or existing.endswith("\n") else "\n"
+        exclude.write_text(existing + sep + entry + "\n")
+    return True
 
 
 def write_pointer(repo: Path, build: Build) -> Path:
@@ -340,13 +354,7 @@ def write_pointer(repo: Path, build: Build) -> Path:
         )
         + "\n"
     )
-    exclude = _exclude_file(repo)
-    if exclude is not None:
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        existing = exclude.read_text() if exclude.exists() else ""
-        if ".cta/" not in existing.splitlines():
-            sep = "" if not existing or existing.endswith("\n") else "\n"
-            exclude.write_text(existing + sep + ".cta/\n")
+    exclude_path(repo, ".cta/active-build")
     return pointer
 
 

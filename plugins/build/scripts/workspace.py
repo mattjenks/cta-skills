@@ -9,9 +9,9 @@ The workspace lives at <repo>/.cta/sdd/<plan-slug>/ so a follow-up plan can neve
 read or overwrite another plan's artifacts. Each workspace records its owning
 plan in a `plan-path` marker (repo-relative inside the repo, absolute outside);
 a slug collision with a different plan is disambiguated by the plan's parent
-directory name, then a counter. `.cta/` is added to the repo's git exclude and a
-self-ignoring .gitignore sits in `.cta/sdd/`, so a workspace never shows in
-`git status`. Stdlib only.
+directory name, then a counter. A self-ignoring .gitignore sits in `.cta/sdd/`,
+so a workspace never shows in `git status` (the rest of `.cta/`, such as a
+tracked security.toml, stays visible). Stdlib only.
 
 CLI (prints the written path):
   workspace.py workspace [-C DIR] PLAN_FILE
@@ -53,31 +53,18 @@ def repo_root(start: Path) -> Path:
     return Path(proc.stdout.strip()).resolve()
 
 
-def _exclude_cta(repo: Path) -> None:
-    """Idempotently add `.cta/` to the repo's info/exclude (never a tracked file)."""
-    proc = _git(repo, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return
-    exclude = Path(proc.stdout.strip())
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    existing = exclude.read_text() if exclude.exists() else ""
-    if ".cta/" not in existing.splitlines():
-        sep = "" if not existing or existing.endswith("\n") else "\n"
-        exclude.write_text(existing + sep + ".cta/\n")
-
-
 def workspace_dir(repo: Path, plan_file: Path) -> Path:
     """Resolve and create the workspace for `plan_file` under `repo/.cta/sdd/`."""
     plan_file = Path(plan_file)
     if not plan_file.is_file():
         raise WorkspaceError(f"no such plan file: {plan_file}")
     root = repo_root(Path(repo))
-    slug = plan_file.stem
+    slug = plan_file.name.removesuffix(".md")
     if not slug or slug in (".", ".."):
         raise WorkspaceError(f"cannot derive a workspace name from: {plan_file}")
     base = root / SDD
 
-    plan_dir = plan_file.resolve().parent
+    plan_dir = plan_file.parent.resolve()
     plan_abs = plan_dir / plan_file.name
     try:
         plan_id = plan_abs.relative_to(root).as_posix()
@@ -105,7 +92,6 @@ def workspace_dir(repo: Path, plan_file: Path) -> Path:
     gitignore = base / ".gitignore"
     if not gitignore.exists():  # create-only: a repo may version its own
         gitignore.write_text("*\n")
-    _exclude_cta(root)
     return d
 
 
@@ -114,7 +100,9 @@ def task_brief(plan_file: Path, task: str, out_dir: Path) -> Path:
     plan_file = Path(plan_file)
     if not plan_file.is_file():
         raise WorkspaceError(f"no such plan file: {plan_file}")
-    lines = plan_file.read_text().splitlines()
+    lines = plan_file.read_text(encoding="utf-8").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
     captured: list[str] = []
     infence = False
     fence_line = 0

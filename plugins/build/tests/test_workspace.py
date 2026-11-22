@@ -129,3 +129,41 @@ def test_cli_prints_paths(tmp_path):
     assert br.returncode == 0 and br.stdout.strip().endswith("task-1-brief.md")
     bad = run("brief", str(plan), "42")
     assert bad.returncode != 0 and "42" in bad.stderr
+
+
+def test_security_toml_stays_visible(tmp_path):
+    import kbwork
+
+    repo = make_repo(tmp_path / "repo")
+    plan = repo / "plan.md"
+    plan.write_text(PLAN)
+    build = kbwork.Build("app", "t", __import__("datetime").date(2026, 1, 2), tmp_path / "w", "b", tmp_path / "f")
+    kbwork.write_pointer(repo, build)
+    workspace.workspace_dir(repo, plan)
+    (repo / ".cta/security.toml").write_text("gated = true\n")
+    status = git(repo, "status", "--porcelain", "-uall")
+    assert ".cta/security.toml" in status
+    assert "active-build" not in status and "sdd" not in status
+
+
+def test_brief_last_task_to_eof_and_spaces(tmp_path):
+    d = tmp_path / "my plans"
+    d.mkdir()
+    plan = d / "my plan.md"
+    plan.write_text("### Task 1: A\n\na\n\n### Task 2: B\n\nlast line still b\nend", encoding="utf-8")
+    out = workspace.task_brief(plan, "2", tmp_path / "o")
+    assert out.read_text(encoding="utf-8").endswith("last line still b\nend\n")
+
+
+def test_brief_unclosed_fence_refused(tmp_path):
+    plan = tmp_path / "p.md"
+    plan.write_text("### Task 1: A\n\n```\ncode\n### Task 2: hidden\n")
+    with pytest.raises(workspace.WorkspaceError, match="never closes"):
+        workspace.task_brief(plan, "1", tmp_path / "o")
+
+
+def test_slug_strips_only_md(tmp_path):
+    repo = make_repo(tmp_path / "repo")
+    plan = repo / "plan.v2.txt"
+    plan.write_text("x\n")
+    assert workspace.workspace_dir(repo, plan).name == "plan.v2.txt"

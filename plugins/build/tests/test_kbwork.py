@@ -155,7 +155,8 @@ def test_pointer_roundtrip_and_exclude_once(tmp_path, kb):
     assert set(data) == {"worktree", "folder", "slug", "topic", "branch"}
     kbwork.write_pointer(repo, b)
     exclude = (repo / ".git/info/exclude").read_text()
-    assert exclude.splitlines().count(".cta/") == 1
+    assert exclude.splitlines().count(".cta/active-build") == 1
+    assert ".cta/" not in exclude.splitlines()
     assert git(repo, "status", "--porcelain") == ""
     got = kbwork.read_pointer(repo)
     assert got.worktree == b.worktree and got.folder == b.folder
