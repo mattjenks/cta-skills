@@ -1,4 +1,5 @@
 import json
+import tomllib
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -177,14 +178,171 @@ def test_close_build_keeps_unmerged(tmp_path, kb, capsys):
     (b.folder / "design.md").write_text("d")
     git(b.worktree, "add", ".")
     git(b.worktree, "commit", "-q", "-m", "doc")
-    msg = kbwork.close_build(b)
+    res = kbwork.close_build(b)
     assert b.worktree.exists()
-    assert "not merged" in msg
+    assert not res.removed and "not merged" in res.reason
 
 
 def test_close_build_removes_merged(tmp_path, kb):
     b = kbwork.open_build(kb, "projects", "app", "login", TODAY, tmp_path / "wt")
     # branch has no commits beyond main: merged
-    msg = kbwork.close_build(b)
+    res = kbwork.close_build(b)
     assert not b.worktree.exists()
-    assert "removed" in msg
+    assert res.removed
+
+
+def _cfg(tmp_path, text, newline=None):
+    p = tmp_path / "config.toml"
+    p.write_bytes(text.encode("utf-8"))
+    return p
+
+
+def _repo(tmp_path, name="repo"):
+    r = tmp_path / name
+    r.mkdir(exist_ok=True)
+    return r
+
+
+def test_record_project_inserts_before_next_table(tmp_path):
+    cfg = _cfg(tmp_path, '[projects]\n"/a" = "a"\n\n[notify]\nmin_turn_seconds = 5\n')
+    repo = _repo(tmp_path)
+    kbwork.record_project(cfg, repo, "app")
+    data = tomllib.loads(cfg.read_text())
+    assert data["projects"] == {"/a": "a", str(repo.resolve()): "app"}
+    assert data["notify"] == {"min_turn_seconds": 5}
+    assert cfg.read_text().index(str(repo.resolve())) < cfg.read_text().index("[notify]")
+
+
+def test_record_project_replaces_same_key(tmp_path):
+    repo = _repo(tmp_path)
+    cfg = _cfg(tmp_path, f'[projects]\n"{repo.resolve()}" = "old"\n"/b" = "b"\n')
+    kbwork.record_project(cfg, repo, "new")
+    assert tomllib.loads(cfg.read_text())["projects"] == {str(repo.resolve()): "new", "/b": "b"}
+
+
+@pytest.mark.parametrize("header", ["[projects] # mine", "[ projects ]", "[projects]   "])
+def test_record_project_header_variants(tmp_path, header):
+    repo = _repo(tmp_path)
+    cfg = _cfg(tmp_path, f'{header}\n"/a" = "a"\n')
+    kbwork.record_project(cfg, repo, "app")
+    assert tomllib.loads(cfg.read_text())["projects"] == {"/a": "a", str(repo.resolve()): "app"}
+
+
+def test_record_project_single_quoted_existing_key(tmp_path):
+    repo = _repo(tmp_path)
+    cfg = _cfg(tmp_path, f"[projects]\n'{repo.resolve()}' = \"old\"\n")
+    kbwork.record_project(cfg, repo, "new")
+    assert tomllib.loads(cfg.read_text())["projects"] == {str(repo.resolve()): "new"}
+
+
+def test_record_project_refuses_inline_table(tmp_path):
+    cfg = _cfg(tmp_path, 'projects = { "/a" = "a" }\n')
+    before = cfg.read_bytes()
+    with pytest.raises(KbError):
+        kbwork.record_project(cfg, _repo(tmp_path), "app")
+    assert cfg.read_bytes() == before
+
+
+def test_record_project_refuses_invalid_toml(tmp_path):
+    cfg = _cfg(tmp_path, "this is = = bad\n")
+    before = cfg.read_bytes()
+    with pytest.raises(KbError):
+        kbwork.record_project(cfg, _repo(tmp_path), "app")
+    assert cfg.read_bytes() == before
+
+
+def test_record_project_multiline_array_with_bracket_line(tmp_path):
+    cfg = _cfg(tmp_path, '[projects]\n"/a" = "a"\n\n[other]\nlist = [\n  [1, 2],\n  [3],\n]\n')
+    repo = _repo(tmp_path)
+    kbwork.record_project(cfg, repo, "app")
+    data = tomllib.loads(cfg.read_text())
+    assert data["other"] == {"list": [[1, 2], [3]]}
+    assert data["projects"][str(repo.resolve())] == "app"
+
+
+def test_record_project_array_continuation_inside_projects_section(tmp_path):
+    cfg = _cfg(tmp_path, 'persona = "x"\n[projects]\n"/a" = "a"\n"/m" = [\n  [1],\n]\n')
+    repo = _repo(tmp_path)
+    kbwork.record_project(cfg, repo, "app")
+    assert tomllib.loads(cfg.read_text())["projects"][str(repo.resolve())] == "app"
+
+
+def test_record_project_preserves_crlf(tmp_path):
+    cfg = _cfg(tmp_path, 'kb = "x"\r\n[projects]\r\n"/a" = "a"\r\n')
+    kbwork.record_project(cfg, _repo(tmp_path), "app")
+    raw = cfg.read_bytes()
+    assert raw.count(b"\n") == raw.count(b"\r\n")
+
+
+def test_record_project_non_bmp_and_control_paths(tmp_path):
+    repo = _repo(tmp_path, "proj-\U0001F600-\x7f")
+    cfg = _cfg(tmp_path, "")
+    kbwork.record_project(cfg, repo, "app")
+    assert tomllib.loads(cfg.read_text(encoding="utf-8"))["projects"] == {str(repo.resolve()): "app"}
+
+
+def test_record_project_no_trailing_newline(tmp_path):
+    cfg = _cfg(tmp_path, '[projects]\n"/a" = "a"')
+    repo = _repo(tmp_path)
+    kbwork.record_project(cfg, repo, "app")
+    assert tomllib.loads(cfg.read_text())["projects"] == {"/a": "a", str(repo.resolve()): "app"}
+
+
+def _remote_clone(tmp_path):
+    origin = make_repo(tmp_path / "origin")
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(origin), str(bare)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(bare), str(clone)], check=True)
+    return bare, clone
+
+
+def _push_and_delete_remote(bare, b):
+    git(b.worktree, "push", "-q", "-u", "origin", b.branch)
+    subprocess.run(["git", "-C", str(bare), "update-ref", "-d", f"refs/heads/{b.branch}"], check=True)
+
+
+def _commit(b, name="d.md"):
+    (b.folder / name).write_text("d")
+    git(b.worktree, "add", ".")
+    git(b.worktree, "commit", "-q", "-m", name)
+
+
+def test_close_build_keeps_dirty_merged(tmp_path, kb):
+    b = kbwork.open_build(kb, "projects", "app", "login", TODAY, tmp_path / "wt")
+    (b.folder / "wip.md").write_text("wip")
+    res = kbwork.close_build(b)
+    assert not res.removed and b.worktree.exists() and "uncommitted" in res.reason
+
+
+def test_close_build_gone_with_local_only_commits_kept(tmp_path):
+    bare, clone = _remote_clone(tmp_path)
+    b = kbwork.open_build(clone, "projects", "app", "t", TODAY, tmp_path / "wt")
+    _commit(b, "one.md")
+    _push_and_delete_remote(bare, b)
+    _commit(b, "two.md")
+    res = kbwork.close_build(b)
+    assert not res.removed and b.worktree.exists() and "never pushed" in res.reason
+
+
+def test_close_build_gone_after_squash_merge_removed(tmp_path):
+    bare, clone = _remote_clone(tmp_path)
+    b = kbwork.open_build(clone, "projects", "app", "t", TODAY, tmp_path / "wt")
+    _commit(b)
+    _push_and_delete_remote(bare, b)
+    res = kbwork.close_build(b)
+    assert res.removed and not b.worktree.exists()
+    assert "kept branch" in res.reason
+
+
+def test_nested_folder_in_repo_is_not_a_kb(tmp_path, kb):
+    nested = kb / "sub"
+    nested.mkdir()
+    with pytest.raises(KbError):
+        kbwork.open_build(nested, "projects", "app", "t", TODAY, tmp_path / "wt")
+
+
+def test_slug_patterns_agree():
+    import cta_config
+
+    assert kbwork.SLUG_PATTERN.pattern == cta_config.SLUG_PATTERN.pattern

@@ -18,12 +18,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from datetime import date as Date
 from pathlib import Path
+from typing import NamedTuple
 
 SLUG_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 DEFAULT_ROOT = Path.home() / ".local/share/cta/kb-worktrees"
@@ -69,6 +73,14 @@ def _out(cwd: Path, *args: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def _fetch(kb: Path, *extra: str) -> None:
+    """Best-effort fetch: offline or hung remotes degrade to local refs."""
+    try:
+        _git(kb, "fetch", "--quiet", *extra, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _check_slug(value: str, what: str) -> None:
     if not isinstance(value, str) or not SLUG_PATTERN.fullmatch(value):
         raise ValueError(f"{what} {value!r} must match [a-z0-9][a-z0-9-]{{0,62}}")
@@ -77,46 +89,112 @@ def _check_slug(value: str, what: str) -> None:
 # --- project mapping ---------------------------------------------------------
 
 
-def record_project(config_path: Path, repo: Path, slug: str) -> None:
-    """Add `"<resolved repo>" = "<slug>"` under [projects] without touching other lines."""
-    _check_slug(slug, "slug")
-    key = json.dumps(str(Path(repo).expanduser().resolve()))
-    entry = f"{key} = {json.dumps(slug)}"
-    config_path = Path(config_path)
-    lines = config_path.read_text().splitlines() if config_path.exists() else []
+_HEADER = re.compile(r"^\s*\[\s*projects\s*\]\s*(#.*)?$")
+_ANY_HEADER = re.compile(r"^\s*\[")
 
-    header = next((i for i, l in enumerate(lines) if l.strip() == "[projects]"), None)
-    if header is None:
+
+def _toml_str(value: str) -> str:
+    """TOML basic string: escape backslash, quote and control characters (incl. DEL)."""
+    out = []
+    for ch in value:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+    return '"' + "".join(out) + '"'
+
+
+def _parses(text: str) -> bool:
+    try:
+        tomllib.loads(text)
+        return True
+    except tomllib.TOMLDecodeError:
+        return False
+
+
+def record_project(config_path: Path, repo: Path, slug: str) -> None:
+    """Add `"<resolved repo>" = "<slug>"` under [projects] without touching other lines.
+
+    Refuses (KbError, file untouched) when the existing config is not valid TOML or
+    its `projects` entry is not a plain `[projects]` table.
+    """
+    _check_slug(slug, "slug")
+    repo_key = str(Path(repo).expanduser().resolve())
+    entry = f"{_toml_str(repo_key)} = {_toml_str(slug)}"
+    path = Path(os.path.realpath(Path(config_path).expanduser()))
+
+    text = path.read_bytes().decode("utf-8") if path.exists() else ""
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise KbError(f"{path} is not valid TOML ({exc}); not editing it") from exc
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+
+    existing = before.get("projects")
+    if existing is not None and not isinstance(existing, dict):
+        raise KbError(f"{path}: `projects` is not a table; not editing it")
+    headers = [i for i, l in enumerate(lines) if _HEADER.match(l)]
+    if existing is not None and len(headers) != 1:
+        raise KbError(f"{path}: cannot find a single plain [projects] table; not editing it")
+
+    if not headers:
         if lines and lines[-1].strip():
             lines.append("")
         lines += ["[projects]", entry]
     else:
+        header = headers[0]
         end = len(lines)
         for i in range(header + 1, len(lines)):
-            if lines[i].lstrip().startswith("["):
+            if _ANY_HEADER.match(lines[i]) and _parses("\n".join(lines[:i])):
                 end = i
                 break
-        existing = next(
-            (i for i in range(header + 1, end) if lines[i].lstrip().startswith(key + " ")
-             or lines[i].lstrip().startswith(key + "=")),
-            None,
-        )
-        if existing is not None:
-            lines[existing] = entry
+        same = None
+        for i in range(header + 1, end):
+            try:
+                one = tomllib.loads(lines[i])
+            except tomllib.TOMLDecodeError:
+                continue
+            if repo_key in one:
+                same = i
+        if same is not None:
+            lines[same] = entry
         else:
             at = end
             while at > header + 1 and not lines[at - 1].strip():
                 at -= 1
             lines.insert(at, entry)
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text("\n".join(lines) + "\n")
+
+    out = nl.join(lines) + nl
+    try:
+        after = tomllib.loads(out)
+    except tomllib.TOMLDecodeError as exc:
+        raise KbError(f"{path}: edit would produce invalid TOML ({exc}); not editing it") from exc
+    expected = dict(before)
+    expected["projects"] = {**(existing or {}), repo_key: slug}
+    if after != expected:
+        raise KbError(f"{path}: edit did not round-trip; not editing it")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp-kbwork")
+    tmp.write_bytes(out.encode("utf-8"))
+    if path.exists():
+        shutil.copymode(path, tmp)
+    os.replace(tmp, path)
 
 
 # --- worktrees ---------------------------------------------------------------
 
 
 def _require_repo(kb: Path) -> None:
-    if not Path(kb).is_dir() or not _ok(kb, "rev-parse", "--git-dir"):
+    top = _out(kb, "rev-parse", "--show-toplevel") if Path(kb).is_dir() else ""
+    if not top or Path(top).resolve() != Path(kb).resolve():
         raise KbError(f"knowledge base at {kb} is not a git repo; run /core:init-kb")
 
 
@@ -172,7 +250,7 @@ def open_build(
     worktree = root / name
 
     if _out(kb, "remote"):
-        _git(kb, "fetch", "--quiet", check=False)  # offline: build from what we have
+        _fetch(kb)
 
     registered = _worktree_paths(kb)
     if worktree.resolve() in registered:
@@ -196,33 +274,45 @@ def open_build(
     return Build(slug, topic, today, worktree, branch, folder)
 
 
-def close_build(build: Build) -> str:
-    """Remove the worktree only if its branch is merged or gone on the remote."""
+class CloseResult(NamedTuple):
+    removed: bool
+    reason: str
+
+
+def close_build(build: Build) -> CloseResult:
+    """Remove the worktree only if its work is safe: merged, or its remote branch was
+    deleted and nothing exists only locally."""
     wt = build.worktree
     if not wt.exists():
-        return f"worktree {wt} already removed"
+        return CloseResult(True, f"worktree {wt} already removed")
     common = _out(wt, "rev-parse", "--path-format=absolute", "--git-common-dir")
     kb = Path(common).parent if common else wt
+    ref = f"refs/heads/{build.branch}"
+    tip = _out(kb, "rev-parse", "--verify", "-q", ref)
+    pushed = _out(kb, "rev-parse", "--verify", "-q", f"{build.branch}@{{upstream}}")
     if _out(kb, "remote"):
-        _git(kb, "fetch", "--quiet", "--prune", check=False)
+        _fetch(kb, "--prune")
 
     merged = False
     try:
-        base = _base_ref(kb)
-        merged = _ok(kb, "merge-base", "--is-ancestor", build.branch, base)
+        merged = _ok(kb, "merge-base", "--is-ancestor", build.branch, _base_ref(kb))
     except KbError:
         pass
-    gone = "[gone]" in _out(kb, "for-each-ref", "--format=%(upstream:track)", f"refs/heads/{build.branch}")
-    if not (merged or gone):
-        return f"kept {wt}: branch {build.branch} is not merged and not deleted on the remote"
+    gone = "[gone]" in _out(kb, "for-each-ref", "--format=%(upstream:track)", ref)
+    if not merged:
+        if not gone:
+            return CloseResult(False, f"kept {wt}: branch {build.branch} is not merged and not deleted on the remote")
+        if not tip or tip != pushed:
+            return CloseResult(False, f"kept {wt}: branch {build.branch} has commits that were never pushed")
     if _out(wt, "status", "--porcelain"):
-        return f"kept {wt}: it has uncommitted changes"
+        return CloseResult(False, f"kept {wt}: it has uncommitted changes")
     try:
         _git(kb, "worktree", "remove", str(wt))
     except subprocess.CalledProcessError as exc:
-        return f"kept {wt}: {exc.stderr.strip()}"
-    _git(kb, "branch", "-d", build.branch, check=False)
-    return f"removed {wt}"
+        return CloseResult(False, f"kept {wt}: {exc.stderr.strip()}")
+    if _ok(kb, "branch", "-d", build.branch):
+        return CloseResult(True, f"removed {wt}")
+    return CloseResult(True, f"removed {wt}; kept branch {build.branch} (git would not delete it as merged)")
 
 
 # --- active-build pointer ----------------------------------------------------
@@ -328,11 +418,10 @@ def main(argv: list[str] | None = None) -> int:
             if build is None:
                 print(json.dumps({"closed": False, "message": "no active build"}))
             else:
-                message = close_build(build)
-                removed = message.startswith(("removed", "worktree"))
-                if removed:
+                result = close_build(build)
+                if result.removed:
                     clear_pointer(args.repo)
-                print(json.dumps({"closed": removed, "message": message}))
+                print(json.dumps({"closed": result.removed, "message": result.reason}))
     except (KbError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1
