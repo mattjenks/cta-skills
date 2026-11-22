@@ -77,6 +77,9 @@ BLOCKED_ENV = (
     "BLOCKED: this would dump or send the process environment or a secret file.\n"
     "Read the single variable you need (os.environ.get) and never print it."
 )
+BLOCKED_COMPLEX = "BLOCKED: command too complex for the secrets guard to inspect"
+MAX_COMMAND = 20_000
+MAX_OPENERS = 256
 BLOCKED_RM = "BLOCKED: refusing to run a recursive-force delete (rm -rf)."
 
 
@@ -85,47 +88,46 @@ def _normalize(command: str) -> str:
     return " ".join(command.replace("'", "").replace('"', "").split())
 
 
-def _spans(text: str) -> list[str]:
-    """Inner text of every $(...) and backtick span in text (nested ones too)."""
-    found: list[str] = []
-    i = 0
-    while True:
-        i = text.find("$(", i)
-        if i < 0:
-            break
-        depth, j = 1, i + 2
-        while j < len(text) and depth:
-            depth += {"(": 1, ")": -1}.get(text[j], 0)
-            j += 1
-        found.append(text[i + 2 : j - 1 if depth == 0 else j])
-        i += 2
-    found.extend(m.group(1) for m in re.finditer(r"`([^`]*)`", text))
-    return found
+def _substitutions(text: str) -> list[str]:
+    """Body of every $(...) and backtick span, nested ones included.
 
-
-def _substitutions(command: str) -> list[str]:
-    """All substitution bodies, via a worklist with a seen-set (linear)."""
-    seen: set[str] = set()
+    One stack-based pass over the original string; every nested span is already
+    a substring of it, so bodies are never re-scanned. Unclosed spans run to
+    the end of the string.
+    """
     out: list[str] = []
-    work = [command]
-    while work:
-        for inner in _spans(work.pop()):
-            if inner not in seen and inner != command:
-                seen.add(inner)
-                out.append(inner)
-                work.append(inner)
+    stack: list[int] = []  # body start for $( ; -1 for a plain "(" group
+    tick = -1
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "$" and text.startswith("$(", i):
+            stack.append(i + 2)
+            i += 2
+            continue
+        if c == "(":
+            stack.append(-1)
+        elif c == ")" and stack:
+            start = stack.pop()
+            if start >= 0:
+                out.append(text[start:i])
+        elif c == "`":
+            if tick < 0:
+                tick = i + 1
+            else:
+                out.append(text[tick:i])
+                tick = -1
+        i += 1
+    out.extend(text[st:] for st in stack if st >= 0)
+    if tick >= 0:
+        out.append(text[tick:])
     return out
 
 
-def _variants(command: str) -> list[str]:
-    out: list[str] = []
+def _bases(command: str) -> list[str]:
     # Backslash as a Windows separator, and backslash deleted (the shell reads
     # `.e\nv` as `.env`).
-    for base in (command.replace("\\", "/"), command.replace("\\", "")):
-        for t in (base, *_substitutions(base)):
-            out.append(t)
-            out.append(_normalize(t))
-    return out
+    return [command.replace("\\", "/"), command.replace("\\", "")]
 
 
 def _is_secret_path(path: str) -> bool:
@@ -155,6 +157,16 @@ def _is_dangerous_rm(command: str) -> bool:
             if rec and force:
                 return True
     return False
+
+
+def _bash_reason(variant: str) -> str | None:
+    if _env_dump(variant) or BARE_ENV.search(variant):
+        return BLOCKED_ENV
+    if _command_names_secret(variant):
+        return BLOCKED_SECRET
+    if _is_dangerous_rm(variant):
+        return BLOCKED_RM
+    return None
 
 
 def _inspect_content(text: str) -> str | None:
@@ -205,13 +217,17 @@ def check(tool_name: str, tool_input: dict) -> str | None:
 
     if tool_name in ("Bash", "PowerShell"):
         command = str(tool_input.get("command") or "")
-        for variant in _variants(command):
-            if _env_dump(variant) or BARE_ENV.search(variant):
-                return BLOCKED_ENV
-            if _command_names_secret(variant):
-                return BLOCKED_SECRET
-            if _is_dangerous_rm(variant):
-                return BLOCKED_RM
+        if len(command) > MAX_COMMAND or command.count("$(") + command.count("`") > MAX_OPENERS:
+            return BLOCKED_COMPLEX
+        bases = _bases(command)
+        # Unexpanded forms first, then substitution bodies.
+        for stage in (lambda b: [b], _substitutions):
+            for base in bases:
+                for text in stage(base):
+                    for variant in (text, _normalize(text)):
+                        reason = _bash_reason(variant)
+                        if reason:
+                            return reason
         return None
 
     return None

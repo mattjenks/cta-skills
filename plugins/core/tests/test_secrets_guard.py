@@ -137,3 +137,28 @@ def test_deep_nesting_blocks_quickly():
     start = time.time()
     assert check("Bash", {"command": cmd}) is not None
     assert time.time() - start < 1
+
+
+def _timed(cmd):
+    import time
+    start = time.time()
+    result = check("Bash", {"command": cmd})
+    assert time.time() - start < 1
+    return result
+
+
+def test_many_unclosed_openers_block_quickly():
+    assert _timed("cat .env; " + "$(" * 1500) is not None
+
+
+def test_2000_level_nesting_blocks_quickly():
+    assert _timed("$(" * 2000 + "cat .env" + ")" * 2000) is not None
+
+
+def test_oversized_command_fails_closed():
+    assert "too complex" in _timed("echo hello; " * 2100)
+
+
+def test_normal_command_with_substitutions_allowed():
+    cmd = "echo $(date) $(pwd) `whoami` && ls -la src tests docs"
+    assert _timed(cmd) is None
