@@ -1,3 +1,4 @@
+import pytest
 from pathlib import Path
 
 import cta_config
@@ -155,3 +156,39 @@ def test_kb_wrong_type(tmp_path):
     cfg = load_config(path=_write(tmp_path, "kb = []\n"), plugin_root=tmp_path)
     assert cfg.kb is None
     assert cfg.notes == ("config invalid: kb: must be a string path",)
+
+
+def test_notify_default_is_300(tmp_path):
+    cfg = load_config(path=_write(tmp_path, ""), plugin_root=tmp_path)
+    assert cfg.notify_min_seconds == 300
+    assert cfg.notes == ()
+
+
+def test_notify_min_turn_seconds_read(tmp_path):
+    cfg = load_config(
+        path=_write(tmp_path, "[notify]\nmin_turn_seconds = 60\n"), plugin_root=tmp_path
+    )
+    assert cfg.notify_min_seconds == 60
+    assert cfg.notes == ()
+
+
+def test_notify_zero_is_valid(tmp_path):
+    cfg = load_config(
+        path=_write(tmp_path, "[notify]\nmin_turn_seconds = 0\n"), plugin_root=tmp_path
+    )
+    assert cfg.notify_min_seconds == 0
+
+
+@pytest.mark.parametrize("raw", ["-1", '"x"', "1.5", "true"])
+def test_notify_invalid_value_defaults_with_note(tmp_path, raw):
+    cfg = load_config(
+        path=_write(tmp_path, f"[notify]\nmin_turn_seconds = {raw}\n"), plugin_root=tmp_path
+    )
+    assert cfg.notify_min_seconds == 300
+    assert cfg.notes == ("config invalid: notify.min_turn_seconds: must be an integer >= 0",)
+
+
+def test_notify_not_a_table(tmp_path):
+    cfg = load_config(path=_write(tmp_path, 'notify = "x"\n'), plugin_root=tmp_path)
+    assert cfg.notify_min_seconds == 300
+    assert cfg.notes == ("config invalid: notify: must be a table",)

@@ -88,7 +88,9 @@ def _script_path(command):
 
 def test_hooks_json_commands_exist():
     entries = list(_hook_entries())
-    assert {e for e, _, _ in entries} == {"SessionStart", "PreToolUse", "Stop", "Notification"}
+    assert {e for e, _, _ in entries} == {
+        "SessionStart", "PreToolUse", "UserPromptSubmit", "Stop", "Notification"
+    }
     for _, _, hook in entries:
         path = _script_path(hook["command"])
         assert path.is_file(), path
@@ -109,6 +111,22 @@ def _run_wired_guard(tool_name, tool_input):
         command, shell=True, capture_output=True, text=True,
         input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}),
     )
+
+
+def test_wired_turn_start_is_silent_and_records(tmp_path):
+    command = next(
+        h["command"] for e, _, h in _hook_entries() if e == "UserPromptSubmit"
+    ).replace("${CLAUDE_PLUGIN_ROOT}", str(PLUGIN_DIR))
+    assert command.endswith('hooks/turn_start.py"')
+    state = tmp_path / "state"
+    result = subprocess.run(
+        command, shell=True, capture_output=True, text=True,
+        input=json.dumps({"session_id": "wired-1"}),
+        env={**os.environ, "CTA_STATE_DIR": str(state)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert (state / "turns" / "wired-1").is_file()
 
 
 def test_wired_secrets_guard_blocks():

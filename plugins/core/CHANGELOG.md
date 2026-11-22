@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 — notify only for long turns
+
+- New `turn_start.py` (UserPromptSubmit) records when each turn starts; it prints nothing and fails open.
+- `notify.py` notifies only when the turn ran at least `[notify] min_turn_seconds` (default 300); no recorded start or `CTA_UNATTENDED=1` stays silent. Stop clears the start; osascript output is discarded.
+
 ## 0.3.0 — authoring and audit skills
 
 - `create-skill`: author or refactor a skill for a CTA plugin, with the house rules for placement, versioning, naming and baseline testing.

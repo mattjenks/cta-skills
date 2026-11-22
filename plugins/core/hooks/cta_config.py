@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config/cta/config.toml"
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_NOTIFY_MIN_SECONDS = 300
+_SESSION_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def state_dir() -> Path:
+    """Per-user state directory. CTA_STATE_DIR overrides it (used by tests)."""
+    override = os.environ.get("CTA_STATE_DIR")
+    return Path(override) if override else Path.home() / ".local/share/cta/state"
+
+
+def turn_file(session_id: object) -> Path | None:
+    """Path of the turn-start record for a session, or None for an unsafe session id."""
+    if not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id):
+        return None
+    return state_dir() / "turns" / session_id
 
 
 @dataclass(frozen=True)
@@ -16,6 +32,7 @@ class CtaConfig:
     persona: Path
     context: tuple[Path, ...] = ()
     kb: Path | None = None
+    notify_min_seconds: int = DEFAULT_NOTIFY_MIN_SECONDS
     notes: tuple[str, ...] = ()
 
 
@@ -85,10 +102,22 @@ def load_config(path: Path | None = None, plugin_root: Path | None = None) -> Ct
     if "kb" in data:
         kb = _path_value(data["kb"], "kb", notes)
 
+    notify_min_seconds = DEFAULT_NOTIFY_MIN_SECONDS
+    section = data.get("notify")
+    if section is not None and not isinstance(section, dict):
+        notes.append("config invalid: notify: must be a table")
+    elif section and "min_turn_seconds" in section:
+        value = section["min_turn_seconds"]
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            notify_min_seconds = value
+        else:
+            notes.append("config invalid: notify.min_turn_seconds: must be an integer >= 0")
+
     return CtaConfig(
         persona=persona,
         context=tuple(context),
         kb=kb,
+        notify_min_seconds=notify_min_seconds,
         notes=tuple(notes),
     )
 

@@ -8,6 +8,10 @@
 Stop: "Done". Notification: the event's own message, truncated to 120 characters.
 The title is the first `# ` heading of the configured persona file, or "CTA".
 
+Only notifies when the turn has run at least `[notify] min_turn_seconds` (default 300),
+measured from the start recorded by turn_start.py. With no recorded start, or with
+CTA_UNATTENDED=1, it stays silent. Stop clears the recorded start.
+
 Always exits 0 and never blocks. Does nothing outside macOS, and stands down when
 `stop_hook_active` is set so a Stop hook cannot notify in a loop.
 """
@@ -15,9 +19,11 @@ Always exits 0 and never blocks. Does nothing outside macOS, and stands down whe
 from __future__ import annotations
 
 import json
+import os
 import platform
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -60,6 +66,30 @@ def notification_args(event: dict) -> list[str]:
     return ["osascript", "-e", script]
 
 
+def _should_notify(data: dict) -> bool:
+    """True when the session's turn has run at least the configured threshold."""
+    import cta_config
+
+    if os.environ.get("CTA_UNATTENDED") == "1":
+        return False
+    start_file = cta_config.turn_file(data.get("session_id"))
+    if start_file is None:
+        return False
+    try:
+        started = float(start_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return time.time() - started >= cta_config.load_config().notify_min_seconds
+
+
+def _clear_start(data: dict) -> None:
+    import cta_config
+
+    start_file = cta_config.turn_file(data.get("session_id"))
+    if start_file is not None:
+        start_file.unlink(missing_ok=True)
+
+
 def main() -> int:
     try:
         data = json.load(sys.stdin)
@@ -67,7 +97,18 @@ def main() -> int:
             return 0
         if platform.system() != "Darwin":
             return 0
-        subprocess.run(notification_args(data), timeout=5, check=False)
+        try:
+            if _should_notify(data):
+                subprocess.run(
+                    notification_args(data),
+                    timeout=5,
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+        finally:
+            if data.get("hook_event_name") == "Stop":
+                _clear_start(data)
     except Exception:  # fail open: a notification must never interrupt work
         pass
     return 0
