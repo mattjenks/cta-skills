@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/mattjenks/cta-skills/compare/core-v0.5.0...core-v0.5.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* drop $schema from plugin.json so claude.ai stops warning ([39a07e1](https://github.com/mattjenks/cta-skills/commit/39a07e1a82be0c0111d78edac92a17a8e49e8396))
+* drop $schema from plugin.json so claude.ai stops warning ([047df8c](https://github.com/mattjenks/cta-skills/commit/047df8cc0edf2cf728239c7bfb1481e117319495))
+
 ## [0.5.0](https://github.com/mattjenks/cta-skills/compare/core-v0.4.2...core-v0.5.0) (2026-11-23)
 
 

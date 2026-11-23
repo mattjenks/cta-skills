@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.1](https://github.com/mattjenks/cta-skills/compare/build-v1.0.0...build-v1.0.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **build:** commit gate judges only the lines a commit changes ([17aac31](https://github.com/mattjenks/cta-skills/commit/17aac31b30e3eb4d265a410c1adffff18e45f3a6))
+* **build:** commit gate judges only the lines a commit changes ([db15361](https://github.com/mattjenks/cta-skills/commit/db15361cadb12d5d06bdcc1d5ec038295bbd9cbf))
+* drop $schema from plugin.json so claude.ai stops warning ([39a07e1](https://github.com/mattjenks/cta-skills/commit/39a07e1a82be0c0111d78edac92a17a8e49e8396))
+* drop $schema from plugin.json so claude.ai stops warning ([047df8c](https://github.com/mattjenks/cta-skills/commit/047df8cc0edf2cf728239c7bfb1481e117319495))
+
 ## [1.0.0](https://github.com/mattjenks/cta-skills/compare/build-v0.1.0...build-v1.0.0) (2026-11-23)
 
 
