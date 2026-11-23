@@ -29,7 +29,10 @@ A hook run (`check`):
 - Nothing staged against HEAD, or only `*.md` files: pass.
 - semgrep or gitleaks missing (osv-scanner too when a staged path is a manifest): block with
   an install instruction.
-- `scan.fast_scan` over that index, bounded by GATE_DEADLINE: any finding of severity low or
+- `scan.fast_scan` over that index, bounded by GATE_DEADLINE. Only findings on lines the commit
+  adds or edits (`changed_lines`) are judged; file-level findings (line 0) and paths the diff does
+  not map (binary, pure rename, quoted name) are judged whole. Findings on unchanged lines are
+  counted in a note and left to the branch-level `full_scan`. Any judged finding of severity low or
   above blocks; up to MAX_LISTED one-line findings (rule, path, line, scanner message; never the
   matched text) plus info items go to stderr.
 - Any exception (deadline exceeded included): block with `cta commit gate error: <type>`.
@@ -43,6 +46,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -205,6 +209,47 @@ def _staged(top: Path, index_file: str | None) -> list[str]:
     return [n for n in proc.stdout.split("\0") if n]
 
 
+_HUNK = re.compile(rb"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+
+def changed_lines(top: Path, index_file: str | None) -> dict[str, set[int]]:
+    """Post-image line numbers the commit adds or edits, by path (`git diff --cached -U0`).
+
+    A path is in the result only when the diff names it with a `+++ b/<path>` header, so a
+    binary file, a pure rename, a mode-only change or a quoted (unusual) path is absent and its
+    findings are judged whole. A path with only deletions maps to an empty set."""
+    env = git_env(GIT_INDEX_FILE=index_file) if index_file else git_env()
+    proc = subprocess.run(
+        ["git", "-C", str(top), "-c", "core.quotePath=true", "diff", "--cached", "-U0",
+         "--no-color", "--no-ext-diff", "--no-textconv", "--diff-filter=ACMRT",
+         "--src-prefix=a/", "--dst-prefix=b/"],
+        capture_output=True, stdin=subprocess.DEVNULL, env=env)
+    if proc.returncode != 0:
+        raise GateError("git diff --cached -U0 failed")
+    changed: dict[str, set[int]] = {}
+    current: set[int] | None = None
+    for line in proc.stdout.split(b"\n"):
+        if line.startswith(b"diff --git "):
+            current = None
+        elif line.startswith(b"+++ "):
+            name = line[4:]
+            current = None
+            if name.startswith(b"b/"):
+                current = changed.setdefault(os.fsdecode(name[2:]), set())
+        elif current is not None:
+            m = _HUNK.match(line)
+            if m:
+                start, count = int(m.group(1)), int(m.group(2) or b"1")
+                current.update(range(start, start + count))
+    return changed
+
+
+def _in_change(f, changed: dict[str, set[int]]) -> bool:
+    """File-level findings (line 0) and unmapped paths always count; others only on a changed line."""
+    lines = changed.get(f.path)
+    return f.line <= 0 or lines is None or f.line in lines
+
+
 def _one_line(f) -> str:
     msg = " ".join(str(f.message).split())[:160]
     return f"[{f.severity}] {f.path}:{f.line} {f.rule} - {msg}"
@@ -245,8 +290,16 @@ def check(top: Path, index_file: str | None, scan_fn=None, which_fn=None) -> tup
             found = scan_fn(top, index_file)
         if not found:
             return 0, ""
-        blocked, text = _report(found)
-        return (1 if blocked else 0), text
+        changed = changed_lines(top, index_file)
+        kept = [f for f in found if _in_change(f, changed)]
+        note = ""
+        if len(kept) < len(found):
+            note = (f"cta commit gate: {len(found) - len(kept)} finding(s) on unchanged lines "
+                    "not judged here; the branch scan (/build:secure) still reports them")
+        if not kept:
+            return 0, note
+        blocked, text = _report(kept)
+        return (1 if blocked else 0), text + (f"\n{note}" if note else "")
     except Exception as exc:
         tool = getattr(exc, "tool", None)
         return 1, f"cta commit gate error: {type(exc).__name__}{f' ({tool})' if tool else ''}"
