@@ -121,6 +121,23 @@ ROWS = [
     ("Bash", {"command": "echo " + _TICK + _DECLARE_X + _TICK}, True),
     ("Bash", {"command": "bash -c '" + _EXPORT_P + "'"}, True),
     ("Bash", {"command": "ls; " + _DECLARE_X}, True),
+    ("Bash", {"command": "sudo " + _EXPORT_P}, True),
+    ("Bash", {"command": "x=1 " + _DECLARE_X}, True),
+    ("Bash", {"command": "bash -lc '" + _COMPGEN_E + "'"}, True),
+    ("Bash", {"command": "time -p " + _EXPORT_P}, True),
+    ("Bash", {"command": "FOO=1 BAR=2 " + _DECLARE_X}, True),
+    ("Bash", {"command": "! " + _COMPGEN_E}, True),
+    ("Write", {"file_path": "x.sh", "content": "bash -c '" + _EXPORT_P + "'"}, True),
+    ("Write", {"file_path": "x.sh", "content": "bash -c \"" + _DECLARE_X + "\""}, True),
+    ("Write", {"file_path": "x.sh", "content": "if true; then " + _COMPGEN_E + "; fi"}, True),
+    ("Write", {"file_path": "x.sh", "content": "eval " + _EXPORT_P}, True),
+    ("Write", {"file_path": "x.sh", "content": "exec " + _COMPGEN_E}, True),
+    ("Write", {"file_path": "x.sh", "content": "case x in a) " + _DECLARE_X + ";; esac"}, True),
+    ("Write", {"file_path": "x.sh", "content": "sudo -E " + _EXPORT_P}, True),
+    ("Write", {"file_path": "x.sh", "content": "while " + _COMPGEN_E + "; do :; done"}, True),
+    ("Write", {"file_path": "x.sh", "content": "/usr/bin/env " + _EXPORT_P}, True),
+    ("Write", {"file_path": "notes.md", "content": "Use the " + _EXPORT_P + " builtin to list exports."}, False),
+    ("Write", {"file_path": "notes.md", "content": "pre-c " + _EXPORT_P + " is prose"}, False),
     ("Write", {"file_path": "plan.md",
                "content": "- add " + _TICK + _DECLARE_X + _TICK + " assignment allow row"}, False),
     ("Bash", {"command": "grep -n '" + _DECLARE_X + "' notes.md"}, False),
@@ -308,3 +325,9 @@ def test_content_deadline_fails_closed(monkeypatch):
     monkeypatch.setattr(secrets_guard.time, "monotonic", lambda: next(ticks))
     result = check("Write", {"file_path": "x.py", "content": "a = 1"})
     assert result == secrets_guard.BLOCKED_COMPLEX
+
+
+def test_builtin_opener_pattern_is_linear():
+    for filler in ("-a ", "A=1 ", "-c ", "sudo ", " \t"):
+        content = filler * 50_000 + "x"
+        assert _timed_check("Write", {"file_path": "x.sh", "content": content}) is None

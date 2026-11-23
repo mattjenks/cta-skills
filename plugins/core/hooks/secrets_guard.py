@@ -58,10 +58,15 @@ ENV_DUMP = (
     re.compile(r"^[ \t]*env[ \t]*[|>]", re.MULTILINE),  # shell script line: `env | ...`
     re.compile(r"/proc/(?:self|\d+)/environ"),
     # The three env-dump builtins, only at command position (line start, after
-    # a separator or `$(`, a command-prefix word, or `-c`), so prose that names
-    # one does not trip it.
+    # a separator, `!`, `)` or `$(`, a command-prefix word, or a `-c` flag
+    # token, then optional prefix options and env assignments), so prose that
+    # names one does not trip it.
     re.compile(
-        r"(?:^|[;&|({]|\$\(|\b(?:then|do|else|eval|exec|command|builtin)\b|-c)[ \t]*"
+        r"(?:^|[;&|({!)]|\$\("
+        r"|\b(?:then|do|else|eval|exec|command|builtin|if|while|until|sudo|nohup|time|env|xargs)\b"
+        r"|(?<![\w-])-[A-Za-z]*c[ \t]*['\"]?)[ \t]*"
+        r"(?:-[A-Za-z]+[ \t]+){0,4}"
+        r"(?:\b[A-Za-z_]\w*=[^ \t\n]*[ \t]+){0,8}"
         r"(?:export[ \t]+-p\b|declare[ \t]+-x\b|compgen[ \t]+-e\b)",
         re.MULTILINE,
     ),
