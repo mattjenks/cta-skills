@@ -4,12 +4,13 @@
 # ///
 """Branch security scan for `/build:secure`: run the scanners, write or refresh the findings record.
 
-  secure.py scan  --repo R --base B --out FILE   full_scan of B..HEAD, record with diff_hash
-  secure.py stamp --repo R --base B --out FILE   refresh head and diff_hash after fixes
+  secure.py scan --repo R --base B --out FILE   full_scan of B..HEAD; writes head and diff_hash
 
 Exit 0 ok, 2 bad input, 3 STOP: a scanner is missing or failed (the install command is printed,
-nothing is written, nothing is skipped). Findings already in FILE keep their status; this script
-only ever writes `open` for new findings (the assistant may not write the owner-only statuses).
+nothing is written, nothing is skipped). A rescan is the only way head and diff_hash change, so they
+always describe a tree the scanners saw. Rescan rules for findings already in FILE: a rediscovered
+`fixed` reopens to `open`; `false-positive`, `accepted-risk` and `proposed-false-positive` are never
+changed; entries not rediscovered are kept as they are and listed as "not rediscovered".
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ def _head(repo: Path) -> str:
 
 def main(argv=None, which=shutil.which, scan_fn=scan.full_scan) -> int:
     ap = argparse.ArgumentParser(prog="secure.py", description=__doc__.splitlines()[0])
-    ap.add_argument("cmd", choices=["scan", "stamp"])
+    ap.add_argument("cmd", choices=["scan"])
     ap.add_argument("--repo", required=True)
     ap.add_argument("--base", required=True)
     ap.add_argument("--out", required=True)
@@ -56,14 +57,6 @@ def main(argv=None, which=shutil.which, scan_fn=scan.full_scan) -> int:
     except (RuntimeError, ValueError, subprocess.CalledProcessError) as err:
         print(f"secure.py: {err}", file=sys.stderr)
         return 2
-    if a.cmd == "stamp":
-        if not out.is_file():
-            print(f"secure.py: no record at {out}", file=sys.stderr)
-            return 2
-        rec = findings.load(out)
-        rec.update(base=a.base, head=head, diff_hash=dhash)
-        findings.save(out, rec)
-        return 0
     missing = scan.missing_scanners(list(REQUIRED), which)
     if missing:
         return _stop("install " + "; ".join(f"{m}: {INSTALL[m]}" for m in missing))
@@ -73,12 +66,28 @@ def main(argv=None, which=shutil.which, scan_fn=scan.full_scan) -> int:
         tip = INSTALL.get(err.tool)
         return _stop(f"{err}" + (f" (install: {tip})" if tip else ""))
     rec = findings.new_record(a.base, head, dhash, found)
+    lost: list[str] = []
     if out.is_file():
-        old = {f["id"]: f for f in findings.load(out)["findings"]}
+        try:
+            old = {f["id"]: f for f in findings.load(out)["findings"]}
+        except (ValueError, KeyError, TypeError):
+            print(f"secure.py: {out} is not valid JSON in the findings format; fix or remove it",
+                  file=sys.stderr)
+            return 2
+        merged = []
+        for f in rec["findings"]:
+            prev = old.get(f["id"])
+            if prev is None:
+                merged.append(f)
+            else:
+                merged.append({**prev, "status": "open"} if prev.get("status") == "fixed" else prev)
         fresh = {f["id"] for f in rec["findings"]}
-        rec["findings"] = [old.get(f["id"], f) for f in rec["findings"]] + [
-            f for i, f in old.items() if i not in fresh]
+        kept = [f for i, f in old.items() if i not in fresh]
+        lost = [f["id"] for f in kept]
+        rec["findings"] = merged + kept
     findings.save(out, rec)
+    if lost:
+        print("not rediscovered (left as they are): " + ", ".join(lost))
     return 0
 
 

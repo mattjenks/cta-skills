@@ -64,29 +64,75 @@ def test_scan_error_stops_and_writes_nothing(repo, tmp_path, capsys):
     assert "uv tool install pip-audit" in capsys.readouterr().err
 
 
-def test_rescan_keeps_existing_statuses(repo, tmp_path):
-    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
-    out = tmp_path / "s.json"
-    args = ["scan", "--repo", str(repo), "--base", "main", "--out", str(out)]
-    secure.main(args, which=lambda n: "/x", scan_fn=fake_scan([f]))
+def run_scan(repo, out, found, capsys=None):
+    return secure.main(["scan", "--repo", str(repo), "--base", "main", "--out", str(out)],
+                       which=lambda n: "/x", scan_fn=fake_scan(found))
+
+
+def set_status(out, status):
     rec = json.loads(out.read_text())
-    rec["findings"][0]["status"] = "fixed"
+    rec["findings"][0]["status"] = status
     out.write_text(json.dumps(rec))
-    secure.main(args, which=lambda n: "/x", scan_fn=fake_scan([f]))
-    assert json.loads(out.read_text())["findings"][0]["status"] == "fixed"
 
 
-def test_stamp_refreshes_head_and_hash(repo, tmp_path):
+def test_stamp_subcommand_is_gone(repo, tmp_path):
+    with pytest.raises(SystemExit):
+        secure.main(["stamp", "--repo", str(repo), "--base", "main", "--out", str(tmp_path / "s.json")])
+
+
+def test_rescan_refreshes_head_and_hash_after_new_commit(repo, tmp_path):
     out = tmp_path / "s.json"
-    secure.main(["scan", "--repo", str(repo), "--base", "main", "--out", str(out)],
-                which=lambda n: "/x", scan_fn=fake_scan([]))
+    run_scan(repo, out, [])
     (repo / "a.py").write_text("x = 3\n")
     git(repo, "commit", "-qam", "fix")
-    assert secure.main(["stamp", "--repo", str(repo), "--base", "main", "--out", str(out)]) == 0
+    run_scan(repo, out, [])
     rec = json.loads(out.read_text())
     assert rec["head"] == git(repo, "rev-parse", "HEAD")
     assert rec["diff_hash"] == findings.diff_hash(repo, "main", "HEAD")
 
 
-def test_stamp_without_record_fails(repo, tmp_path):
-    assert secure.main(["stamp", "--repo", str(repo), "--base", "main", "--out", str(tmp_path / "no.json")]) == 2
+def test_rediscovered_fixed_reopens(repo, tmp_path):
+    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [f])
+    set_status(out, "fixed")
+    run_scan(repo, out, [f])
+    assert json.loads(out.read_text())["findings"][0]["status"] == "open"
+
+
+@pytest.mark.parametrize("status", ["false-positive", "accepted-risk", "proposed-false-positive"])
+def test_rescan_never_changes_closed_or_proposed(repo, tmp_path, status):
+    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [f])
+    set_status(out, status)
+    run_scan(repo, out, [f])
+    assert json.loads(out.read_text())["findings"][0]["status"] == status
+
+
+def test_not_rediscovered_left_alone(repo, tmp_path):
+    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [f])
+    set_status(out, "fixed")
+    run_scan(repo, out, [])
+    assert json.loads(out.read_text())["findings"][0]["status"] == "fixed"
+
+
+def test_not_rediscovered_label_in_output(repo, tmp_path, capsys):
+    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [f])
+    capsys.readouterr()
+    run_scan(repo, out, [])
+    text = capsys.readouterr().out
+    assert "not rediscovered" in text and f.id in text
+
+
+def test_corrupt_record_exits_2_with_message(repo, tmp_path, capsys):
+    out = tmp_path / "s.json"
+    out.write_text("{not json")
+    rc = run_scan(repo, out, [])
+    assert rc == 2
+    assert "not valid JSON" in capsys.readouterr().err
+    assert out.read_text() == "{not json"

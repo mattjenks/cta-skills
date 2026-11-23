@@ -61,11 +61,16 @@ positive set `proposed-false-positive` with the reason, then tell the owner whic
 
 ## 5. Finish
 
-After the last fix run `secure.py stamp --repo "$PWD" --base BASE --out <folder>/security.json` so `head` and
-`diff_hash` match the final branch (re-run the scan if any fix changed code the first scan did not cover).
-Report: counts by status, the fixes with their commits, and every entry waiting on the owner
-(`open`, `proposed-false-positive`). Commit and push `security.json` in the knowledge-base worktree
-(`docs(<slug>): security pass`). Never push to the default branch.
+After the last fix, re-run the scan on the final head: `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/secure.py" scan --repo "$PWD" --base BASE --out <folder>/security.json`.
+It is the only thing that writes `head` and `diff_hash`, so they always describe a tree the scanners saw.
+The rescan keeps every entry's status with three rules: a finding found again that was `fixed` reopens as
+`open` (a regression: back to section 3); `false-positive`, `accepted-risk` and `proposed-false-positive`
+are never changed; entries the scan did not rediscover are left as they are and printed as "not
+rediscovered" (fixed ones are expected). A `security.json` that is not valid JSON stops the script (exit 2):
+tell the owner, do not overwrite it.
+Report: counts by status, the fixes with their commits, every entry waiting on the owner (`open`,
+`proposed-false-positive`) and any "not rediscovered" entries. Commit and push `security.json` in the
+knowledge-base worktree (`docs(<slug>): security pass`). Never push to the default branch.
 
 ## Resources
 

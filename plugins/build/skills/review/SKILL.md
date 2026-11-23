@@ -25,9 +25,14 @@ catches what only shows across tasks. Model map: `../implement/references/models
 - Review package: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" package PLAN BASE HEAD` (the whole
   branch range). Paths only, never pasted content.
 - Deferred minors: every `minor (deferred)` line in the ledger, collected into one file in the workspace.
-- Skill changes: list the `SKILL.md` files the diff adds or changes, and for each run
-  `uv run --script <plugins>/core/skills/create-skill/scripts/check_skill.py <skill-dir>`. A changed
-  `SKILL.md` with no evals, or any budget failure it prints, is an Important finding (`references/final-review.md`).
+- Skill changes: list the `SKILL.md` files the diff adds or changes, and for each run core's checker:
+  `uv run --script <check_skill.py> <skill-dir>`. The script belongs to the `core` plugin, so find it from
+  this plugin's root: `${CLAUDE_PLUGIN_ROOT}/../core/skills/create-skill/scripts/check_skill.py` in a repo
+  checkout, or `${CLAUDE_PLUGIN_ROOT}/../../core/*/skills/create-skill/scripts/check_skill.py` when the
+  marketplace installed both plugins side by side (the installed layout is `<marketplace>/<plugin>/<version>/`;
+  take the newest version). If neither exists the script is missing: report that as an Important finding
+  and never skip the check silently. A changed `SKILL.md` with no evals, or any budget failure it prints, is
+  an Important finding (`references/final-review.md`).
 
 ## 2. Final review
 

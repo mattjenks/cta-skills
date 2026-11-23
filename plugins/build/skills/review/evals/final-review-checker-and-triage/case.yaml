@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: final-review-checker-and-triage
+expected_outcome: |
+  The assistant runs the final review on opus, locates core's check_skill.py from the plugin root, and triages the deferred minors.

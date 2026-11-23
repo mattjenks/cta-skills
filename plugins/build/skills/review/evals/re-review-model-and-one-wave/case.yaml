@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: re-review-model-and-one-wave
+expected_outcome: |
+  The re-review ran on sonnet; the assistant stops after one wave, lists the open finding, and does not declare the branch ready for the PR.

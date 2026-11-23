@@ -446,3 +446,23 @@ def test_review_credits_sources():
 
 def test_secure_and_review_stay_in_their_lane():
     assert not re.search(r"\bfable\b", text("secure") + text("review"), re.I)
+
+
+# --- task 8 fix round 1 ---
+
+
+def test_secure_has_one_flow_rescan_on_finish_no_stamp():
+    body = text("secure")
+    assert "stamp" not in body
+    finish = (SKILLS / "secure/SKILL.md").read_text().split("## 5.")[1]
+    assert re.search(r"secure\.py\" scan", finish)
+    assert re.search(r"final head|final branch", finish)
+    assert re.search(r"reopen", body, re.I) and re.search(r"not rediscovered", body)
+
+
+def test_review_locates_core_check_skill_and_reports_when_missing():
+    body = text("review")
+    assert "<plugins>" not in body
+    assert re.search(r"CLAUDE_PLUGIN_ROOT\}/\.\./core/skills/create-skill/scripts/check_skill\.py", body)
+    assert re.search(r"CLAUDE_PLUGIN_ROOT\}/\.\./\.\./core/\*/skills/create-skill/scripts/check_skill\.py", body)
+    assert re.search(r"missing[^.]*(finding)[^.]*never skip|never skip[^.]*silently", body, re.I | re.S)
