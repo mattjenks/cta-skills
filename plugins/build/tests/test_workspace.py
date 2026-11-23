@@ -167,3 +167,25 @@ def test_slug_strips_only_md(tmp_path):
     plan = repo / "plan.v2.txt"
     plan.write_text("x\n")
     assert workspace.workspace_dir(repo, plan).name == "plan.v2.txt"
+
+
+def test_small_change_design_file_works_for_workspace_and_package(tmp_path):
+    repo = make_repo(tmp_path / "repo")
+    design = repo / "topic-design.md"
+    design.write_text("# Design\n\nStatus: approved — Small\n\nNo task headings here.\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "design")
+    base = git(repo, "rev-parse", "HEAD").strip()
+    (repo / "a.txt").write_text("x\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "work")
+    head = git(repo, "rev-parse", "HEAD").strip()
+    run = lambda *a: subprocess.run(
+        [sys.executable, str(SCRIPT), *a], capture_output=True, text=True, cwd=repo
+    )
+    ws = run("workspace", str(design))
+    assert ws.returncode == 0 and ws.stdout.strip().endswith(".cta/sdd/topic-design")
+    pk = run("package", str(design), base, head)
+    assert pk.returncode == 0 and pk.stdout.strip().endswith(".diff")
+    br = run("brief", str(design), "1")
+    assert br.returncode != 0 and "Task" in br.stderr

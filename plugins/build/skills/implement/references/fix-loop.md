@@ -7,7 +7,7 @@ only if the builder is touching that code anyway.
 
 | Round | Fixer | Re-reviewer |
 |---|---|---|
-| 1 to 3 | the task's builder model | per `models.md` |
+| 1 to 3 | the task's builder model | sonnet at least (`models.md`) |
 | 4 to 5 | a fresh subagent on opus, new context | opus |
 
 ## Each round
@@ -23,7 +23,8 @@ only if the builder is touching that code anyway.
 
 - From round 4 on (rounds 4 and 5), use a fresh agent on the most capable model: two failed rounds by the same context is a
   sign it cannot see the problem. Say in the ledger why the round escalated.
-- A Critical finding from a sonnet reviewer sends its re-review to opus, whatever the round.
+- A Critical finding from a sonnet reviewer sends its re-review to opus, whatever the round (model rules:
+  `models.md`).
 - After round 5 with findings still open, stop. Mark the task `blocked`, write the findings and what each
   round tried to the ledger, and ask the owner. Never start round 6 and never approve with open Critical
   or Important findings.

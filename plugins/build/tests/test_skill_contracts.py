@@ -290,3 +290,54 @@ def test_validate_credits_sources():
     body = text("validate")
     assert "Adapted from obra/superpowers" in body
     assert "Adapted from coleam00/skills" in body
+
+
+# --- fix round 1 ---
+
+
+def _step_positions(body, *titles):
+    return [body.index(f"**{t}.**") for t in titles]
+
+
+def test_implement_dependency_check_runs_after_fix_loop_and_validate_before_commit():
+    body = (SKILLS / "implement/SKILL.md").read_text()
+    pos = _step_positions(body, "Fix loop", "Validate", "Dependency check", "Commit and push")
+    assert pos == sorted(pos)
+    check = body[pos[2] : pos[3]]
+    assert re.search(r"immediately before the commit|just before the commit", check, re.I)
+    assert re.search(r"fix", check, re.I)
+
+
+def test_implement_stops_on_default_branch_and_unknown_usage():
+    has(
+        "implement",
+        r"default branch[^.]*stop|stop[^.]*default branch",
+        r"no usage tool|usage tool[^.]*(unavailable|not available)",
+        r"context[^.]*unknown",
+    )
+
+
+def test_rereview_floor_is_sonnet_not_haiku():
+    models = (SKILLS / "implement/references/models.md").read_text()
+    row = next(l for l in models.splitlines() if "re-review" in l.lower() and l.startswith("|"))
+    assert row.rstrip().endswith("| opus |") or "haiku" not in row
+    haiku_row = next(l for l in models.splitlines() if l.startswith("| Builder when"))
+    assert "re-review" not in haiku_row.lower()
+    assert re.search(r"re-review[^.]*sonnet", models, re.I)
+    for name in ("re-review-prompt.md", "fix-loop.md"):
+        body = (SKILLS / "implement/references" / name).read_text()
+        assert not re.search(r"\bhaiku\b", body, re.I), name
+        assert "models.md" in body, name
+
+
+def test_critical_from_sonnet_reviewer_sends_rereview_to_opus():
+    fix = (SKILLS / "implement/references/fix-loop.md").read_text()
+    assert re.search(r"Critical[^.]*sonnet[^.]*re-review[^.]*opus", fix, re.I | re.S)
+    skill = (SKILLS / "implement/SKILL.md").read_text()
+    assert re.search(r"Critical[^.]*re-review[^.]*(fix-loop\.md|models\.md)", skill, re.S)
+
+
+def test_implement_small_path_has_a_working_workspace_story():
+    body = (SKILLS / "implement/SKILL.md").read_text()
+    assert re.search(r"Small[^.]*brief[^.]*by hand", body, re.S)
+    assert re.search(r"(workspace|package)[^.]*design file|design file[^.]*(workspace|package)", body, re.S)

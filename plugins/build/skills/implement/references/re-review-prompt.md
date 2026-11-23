@@ -2,8 +2,8 @@
 
 # Re-review prompt
 
-After a fix round, dispatch a re-reviewer on the model named in `models.md` (a small fix diff is a haiku job;
-a Critical finding raises it, see the map). It checks the fix, not the whole task again.
+After a fix round, dispatch a re-reviewer on the model `models.md` names (never below the per-task reviewer's tier;
+a Critical finding raises it). It checks the fix, not the whole task again.
 
 ```text
 A reviewer found these issues in [REPO_PATH]: [FINDINGS_PATH]. A fix was made.
