@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: verify-command-and-exit-codes
+expected_outcome: |
+  Runs secure.py verify and respects its exit codes.

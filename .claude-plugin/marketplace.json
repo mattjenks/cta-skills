@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "core",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "displayName": "CTA Core",
       "source": "./plugins/core",
       "description": "Chief Technology Assistant: a prescriptive, Claude Code-specific system of skills and hooks for the plan, build, deploy, monitor, learn loop.",
@@ -22,6 +22,22 @@
       "license": "MIT",
       "category": "productivity",
       "keywords": ["skills", "hooks", "persona", "workflow", "claude-code"]
+    },
+    {
+      "name": "build",
+      "version": "0.1.0",
+      "displayName": "CTA Build",
+      "source": "./plugins/build",
+      "description": "Chief Technology Assistant build loop: plan-driven implementation, review and security gates, and knowledge-base write-back for the build stage.",
+      "author": {
+        "name": "Matt Jenks",
+        "url": "https://github.com/mattjenks"
+      },
+      "homepage": "https://github.com/mattjenks/cta-skills",
+      "repository": "https://github.com/mattjenks/cta-skills",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["skills", "hooks", "build", "review", "security", "claude-code"]
     }
   ]
 }

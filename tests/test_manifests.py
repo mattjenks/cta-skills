@@ -176,3 +176,86 @@ def test_skill_frontmatter():
         description = fields.get("description", "")
         assert 0 < len(description) <= 1024, (path, len(description))
         assert len(text.splitlines()) <= 500, (path, len(text.splitlines()))
+
+
+BUILD_DIR = ROOT / "plugins" / "build"
+BUILD_HOOKS_JSON = BUILD_DIR / "hooks" / "hooks.json"
+
+
+def _build_hook_entries():
+    data = json.loads(BUILD_HOOKS_JSON.read_text())
+    for event, groups in data["hooks"].items():
+        for group in groups:
+            for hook in group["hooks"]:
+                yield event, group, hook
+
+
+def _build_command(script):
+    return next(
+        h["command"] for _, _, h in _build_hook_entries() if h["command"].endswith(f'hooks/{script}"')
+    ).replace("${CLAUDE_PLUGIN_ROOT}", str(BUILD_DIR))
+
+
+def test_build_hooks_json_commands_exist_and_run_through_uv():
+    entries = list(_build_hook_entries())
+    assert {e for e, _, _ in entries} == {"PreToolUse"}
+    assert {Path(h["command"]).name.rstrip('"') for _, _, h in entries} == {"gate_guard.py", "finding_guard.py"}
+    for _, _, hook in entries:
+        assert hook["command"].startswith("uv run --script "), hook["command"]
+        match = re.search(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"', hook["command"])
+        assert match, hook["command"]
+        path = BUILD_DIR / match.group(1)
+        assert path.is_file(), path
+        assert os.access(path, os.X_OK), f"not executable: {path}"
+
+
+def test_build_hook_matchers_and_timeouts():
+    by_script = {Path(h["command"]).name.rstrip('"'): (g["matcher"], h["timeout"])
+                 for _, g, h in _build_hook_entries()}
+    assert by_script["gate_guard.py"] == ("Bash|Write|Edit|MultiEdit", 15)
+    assert by_script["finding_guard.py"] == ("Write|Edit|MultiEdit|Bash", 15)
+
+
+def test_wired_finding_guard_blocks_and_allows():
+    command = _build_command("finding_guard.py")
+
+    def run(tool_name, tool_input):
+        return subprocess.run(command, shell=True, capture_output=True, text=True,
+                              input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}))
+
+    blocked = run("Write", {"file_path": "x/security.json",
+                            "content": json.dumps([{"status": "accepted-risk"}])})
+    assert blocked.returncode == 2, blocked.stderr
+    assert "only Matt closes findings" in blocked.stderr
+    allowed = run("Write", {"file_path": "x/security.json",
+                            "content": json.dumps([{"status": "proposed-false-positive"}])})
+    assert allowed.returncode == 0, allowed.stderr
+
+
+def test_wired_gate_guard_refuses_hook_bypass_in_gated_repo(tmp_path):
+    command = _build_command("gate_guard.py")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+    def run(cmd, cwd):
+        return subprocess.run(
+            command, shell=True, capture_output=True, text=True, env=env,
+            input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": str(cwd)}),
+        )
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, env=env)
+    assert run("git commit --no-verify -m x", repo).returncode == 0  # not gated
+    (repo / ".cta").mkdir()
+    (repo / ".cta" / "active-build").write_text("{}")
+    blocked = run("git commit --no-verify -m x", repo)
+    assert blocked.returncode == 2, blocked.stderr
+    assert "--no-verify" in blocked.stderr
+    assert run("git commit -m x", repo).returncode == 0
+
+
+def test_build_git_hooks_are_executable_uv_scripts():
+    for name in ("pre-commit", "pre-merge-commit", "pre-applypatch"):
+        path = BUILD_DIR / "hooks" / "git" / name
+        assert path.is_file() and os.access(path, os.X_OK), path
+        assert path.read_text().startswith("#!/usr/bin/env -S uv run --script\n"), path

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: refuse-nonempty-confirm-remote
+expected_outcome: |
+  A non-empty folder is refused unless the user asks to merge; the private repo is only offered, with confirmation first.

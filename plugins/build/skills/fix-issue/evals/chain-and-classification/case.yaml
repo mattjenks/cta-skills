@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: chain-and-classification
+expected_outcome: |
+  fix-issue: gh issue view, then /build:debug, classification, /build:loop, Fixes #n.

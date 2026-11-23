@@ -22,8 +22,13 @@ lines (content inspection is per line for file reads); globs (`cat .en*`);
 indirect reads (`grep -r KEY .`); multi-argument or multi-line environment
 dumps in file content; Bash commands over 20,000 characters (e.g. large
 heredoc writes) and file content over 2,000,000 characters are blocked
-as too complex; Bash tokens that merely
-mention a secret-looking name (e.g. grep for access_code) are blocked.
+as too complex; in prose files (.md .markdown .txt .rst .adoc) the dump
+builtins are caught only at command position (line start, after a separator,
+`$(`, a prefix word, or `-c`), with bounded prefix options/assignments, so a
+prose file holding a dump elsewhere passes the Write and could later be run
+as a script; Bash commands that only mention a builtin are blocked, as are
+Bash tokens that merely mention a secret-looking name (e.g. grep for
+access_code).
 """
 
 import json
@@ -52,12 +57,30 @@ _PRINT_ENV = "print" + "env"
 # Single reads (os.environ.get, os.environ["X"], process.env.X) are fine.
 # Every pattern is linear: a whitespace run that must not cross a line uses
 # [ \t], never \s, and no pattern carries an unbounded gap between two parts.
+_BUILTIN_ANY = re.compile(r"\bexport[ \t]+-p\b|\bdeclare[ \t]+-x\b|\bcompgen[ \t]+-e\b")
 ENV_DUMP = (
     re.compile(r"\b" + _PRINT_ENV + r"\b", re.IGNORECASE),
     re.compile(r"^[ \t]*env[ \t]*[|>]", re.MULTILINE),  # shell script line: `env | ...`
     re.compile(r"/proc/(?:self|\d+)/environ"),
-    re.compile(r"\bexport[ \t]+-p\b|\bdeclare[ \t]+-x\b|\bcompgen[ \t]+-e\b"),
+    # The three env-dump builtins anywhere: a dump held in a string (piped to a
+    # shell, `trap`, `os.system("...")`, a Dockerfile RUN) cannot be anchored.
+    _BUILTIN_ANY,
     re.compile(r"\bENV\.to_h\b|\bENV\.to_a\b|\bputs[ \t]+ENV[ \t]*$", re.MULTILINE),
+)
+
+# Prose files (notes, plans) may name a builtin, so their content is checked
+# for it only at command position (line start, after a separator, `!`, `)` or
+# `$(`, a command-prefix word, or a `-c` flag token, then optional prefix
+# options and env assignments).
+PROSE_SUFFIXES = (".md", ".markdown", ".txt", ".rst", ".adoc")
+_BUILTIN_COMMAND = re.compile(
+    r"(?:^|[;&|({!)]|\$\("
+    r"|\b(?:then|do|else|eval|exec|command|builtin|if|while|until|sudo|nohup|time|env|xargs)\b"
+    r"|(?<![\w-])-[A-Za-z]*c[ \t]*['\"]?)[ \t]*"
+    r"(?:-[A-Za-z]+[ \t]+){0,4}"
+    r"(?:\b[A-Za-z_]\w*=[^ \t\n]*[ \t]+){0,8}"
+    r"(?:export[ \t]+-p\b|declare[ \t]+-x\b|compgen[ \t]+-e\b)",
+    re.MULTILINE,
 )
 
 # Output and secret are matched up by one token scan per rule instead of a
@@ -108,6 +131,13 @@ def _output_env(text: str) -> bool:
 
 
 _DUMP_CHECKS = (*(p.search for p in ENV_DUMP), _echo_secret, _output_env)
+# Prose files swap the unanchored builtin pattern for the command-position one.
+_PROSE_CHECKS = (
+    *(p.search for p in ENV_DUMP if p is not _BUILTIN_ANY),
+    _BUILTIN_COMMAND.search,
+    _echo_secret,
+    _output_env,
+)
 
 # Reading a secret file and sending it to stdout or the network on one line.
 _READ = re.compile(r"\bopen\s*\(|readFile|read_text|read_bytes|\bcat\b|\bsource\b|<\s*\S", re.IGNORECASE)
@@ -235,11 +265,18 @@ def _unify_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _inspect_content(text: str, deadline: float) -> str | None:
+def _is_prose_path(tool_name: str, tool_input: dict) -> bool:
+    # Notebook cells are code, and only `file_path` names what is written.
+    return tool_name != "NotebookEdit" and str(tool_input.get("file_path") or "").lower().endswith(
+        PROSE_SUFFIXES
+    )
+
+
+def _inspect_content(text: str, deadline: float, prose: bool = False) -> str | None:
     if not isinstance(text, str) or not text:
         return None
     text = _unify_newlines(text)
-    for dump in _DUMP_CHECKS:
+    for dump in _PROSE_CHECKS if prose else _DUMP_CHECKS:
         if time.monotonic() > deadline:
             return BLOCKED_COMPLEX
         if dump(text):
@@ -291,8 +328,9 @@ def _check(tool_name: str, tool_input: dict, deadline: float) -> str | None:
         texts = [t for t in _contents(tool_name, tool_input) if isinstance(t, str)]
         if sum(len(t) for t in texts) > MAX_CONTENT:
             return BLOCKED_COMPLEX
+        prose = _is_prose_path(tool_name, tool_input)
         for text in texts:
-            reason = _inspect_content(text, deadline)
+            reason = _inspect_content(text, deadline, prose)
             if reason:
                 return reason
         return None

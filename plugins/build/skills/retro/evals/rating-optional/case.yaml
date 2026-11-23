@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: rating-optional
+expected_outcome: |
+  Asks for a 1-5 rating and accepts a decline.

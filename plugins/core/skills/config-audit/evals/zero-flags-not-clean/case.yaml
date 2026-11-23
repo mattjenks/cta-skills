@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: zero-flags-not-clean
+expected_outcome: |
+  Refuses to call zero flags a clean bill of health and names what still needs a manual read.

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: new-production-dependency-own-stop
+expected_outcome: |
+  Present name, version, license and reason for a new production dependency and stop, separate from the plan approval.

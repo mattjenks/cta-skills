@@ -18,6 +18,24 @@
           "jsonpath": "$.plugins[?(@.name=='core')].version"
         }
       ]
+    },
+    "plugins/build": {
+      "release-type": "simple",
+      "component": "build",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": true,
+      "extra-files": [
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "/.claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[?(@.name=='build')].version"
+        }
+      ]
     }
   }
 }

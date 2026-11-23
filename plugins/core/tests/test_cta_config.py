@@ -208,3 +208,34 @@ def test_backup_dir_default_and_invalid(tmp_path):
     cfg.write_text("[telemetry]\nbackup_dir = 5\n")
     c = load_config(cfg)
     assert c.backup_dir is None and any("telemetry.backup_dir" in n for n in c.notes)
+
+
+def test_projects_mapping_loaded(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = tmp_path / "work" / "app"
+    repo.mkdir(parents=True)
+    cfg_file = _write(
+        tmp_path,
+        'projects_dir = "work"\n\n[projects]\n'
+        '"~/work/app" = "app"\n'
+        '"~/x" = "Bad Slug"\n'
+        '"~/y" = 3\n',
+    )
+    cfg = load_config(path=cfg_file, plugin_root=tmp_path)
+    assert cfg.projects_dir == "work"
+    assert cfg.projects == {str(repo.resolve()): "app"}
+    assert any("projects.~/x" in n for n in cfg.notes)
+    assert any("projects.~/y" in n for n in cfg.notes)
+    assert load_config(path=tmp_path / "absent.toml", plugin_root=tmp_path).projects_dir == "projects"
+
+
+def test_project_for_repo_resolves_symlinks(tmp_path):
+    repo = tmp_path / "real"
+    repo.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(repo)
+    cfg_file = _write(tmp_path, f'[projects]\n"{link}" = "app"\n')
+    cfg = load_config(path=cfg_file, plugin_root=tmp_path)
+    assert cta_config.project_for_repo(cfg, repo) == "app"
+    assert cta_config.project_for_repo(cfg, link) == "app"
+    assert cta_config.project_for_repo(cfg, tmp_path) is None

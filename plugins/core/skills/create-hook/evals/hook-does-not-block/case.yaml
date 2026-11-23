@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: hook-does-not-block
+expected_outcome: |
+  Explains that only exit code 2 blocks (exit 1 is a non-blocking error) and that the reason belongs on stderr; mentions the @file mention gap.

@@ -35,7 +35,7 @@ example in five languages.
 | Field | Required | Constraint |
 |---|---|---|
 | `name` | yes | At most 64 characters, lowercase letters, digits and hyphens, equal to the directory name, no plugin prefix |
-| `description` | yes | At most 1,024 characters, third person, states when to use the skill |
+| `description` | yes | At most 400 characters (test-enforced), third person, says what the skill does and when to use it |
 | `argument-hint` | no | Autocomplete hint, such as `<path> [--base <branch>]` |
 | `allowed-tools` | no | Tools usable without a prompt while the skill is active |
 | `disable-model-invocation` | no | `true` makes the skill user-only |
@@ -48,8 +48,9 @@ unprompted. Read and plan skills stay open. Other fields exist (`model`, `effort
 
 ## Descriptions
 
-The description is a trigger, not a summary. Start "Use when", name concrete situations, symptoms, error
-messages and literal user phrases, and stay in third person.
+The description is a trigger, not a summary, and Claude tends to under-trigger, so make it a little pushy: name
+concrete situations, symptoms, error messages and literal user phrases, and stay in third person. It says what the
+skill does and when to use it, in 400 characters or fewer.
 
 - Good: `Use when tests pass in isolation but fail in the suite, or a test leaves files behind.`
 - Bad: `Helps with testing.` (vague) and `Use when ... runs a four-step process of X, Y, Z.` (summarizes the workflow, so the assistant follows the summary and skips the body)
@@ -59,11 +60,12 @@ Put the searchable words (tool names, error text, synonyms) early and repeat the
 ## Progressive disclosure
 
 1. Metadata (`name` and `description`) is always in context. Keep it small.
-2. The body loads when the skill triggers. Aim for 1,500 to 2,000 words and never exceed 500 lines.
+2. The body loads when the skill triggers. It is the procedure only: 150 lines at most, test-enforced.
 3. Resources load only when the assistant reaches for them. Scripts cost almost nothing, since only their
    output enters the conversation.
 
-Frequently loaded skills deserve the tightest bodies. Cut anything the assistant already knows, point to a
+Each `references/*.md` is 300 lines at most and is named from the body with when to read it. Frequently loaded
+skills deserve the tightest bodies. Cut anything the assistant already knows, point to a
 `--help` instead of documenting flags, and cross-reference other skills by name rather than repeating them.
 
 ## Voice
@@ -121,18 +123,28 @@ Micro-test wording before a full run: one fresh-context sample per call, a no-gu
 does not fail, there is nothing to fix), five or more repetitions per variant, and a manual read of every flagged
 result. Variance is a signal: five different interpretations mean the wording is not binding.
 
+## Models for dispatched agents
+
+A skill that dispatches an agent names the model in the dispatch (haiku for exact-code or one-to-two-file work
+and chores, sonnet for the default builder and per-task reviewer) and links the model map,
+`plugins/build/skills/implement/references/models.md`. The most capable model is reserved for the secure
+checklist review, the final review and fix rounds 4 to 5; `test_opus_only_in_allowed_roles` keeps it out of
+other skills.
+
 ## Anti-patterns
 
 - A narrative about how a problem was solved once. Skills are reusable techniques, not stories.
 - Code in flowcharts, or generic labels such as `step3` and `helper1`.
 - A skill batch: write, test and ship each skill before starting the next.
-- A skill with no baseline failure behind it.
+- A skill with no baseline failure behind it (a case that passes without the skill tests nothing).
+- A dispatch that does not name its model.
 
 ## Done checklist
 
 - [ ] Directory in a CTA plugin; `name` equals the directory; kebab-case; no plugin prefix.
-- [ ] Description starts "Use when", is at most 1,024 characters, names concrete triggers, does not summarize the workflow.
-- [ ] Body at most 500 lines, imperative, no duplication, every bundled file linked.
-- [ ] A baseline failure was observed, and the skill fixed it.
+- [ ] Description is at most 400 characters, says what and when, names concrete triggers, does not summarize the workflow.
+- [ ] Body at most 150 lines, references at most 300, imperative, no duplication, every bundled file linked with when to read it.
+- [ ] At least 2 eval cases under `evals/`, run with and without the skill, pass rates recorded (`references/evals.md`).
+- [ ] `tests/test_skill_budgets.py` passes, or `scripts/check_skill.py` on a skill outside this repo.
 - [ ] No personal data; no persona names; source line on adapted files.
-- [ ] Plugin version bumped in both manifests; changelog line added.
+- [ ] Conventional commit; versions and changelog left to release-please.

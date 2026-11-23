@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: statuses-and-checklist
+expected_outcome: |
+  The assistant writes only open, fixed or proposed-false-positive, routes accepted-risk to the owner, and runs the checklist on opus across the nine areas.

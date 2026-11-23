@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: production-dependency-is-normal
+expected_outcome: |
+  A new production dependency makes the change normal, stated with a reason the owner can override.

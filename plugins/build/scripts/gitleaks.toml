@@ -1,0 +1,6 @@
+# Bundled gitleaks config. Passing it with --config stops a repository's own
+# .gitleaks.toml from changing the rules. The default rule set is extended as is.
+title = "cta build default"
+
+[extend]
+useDefault = true

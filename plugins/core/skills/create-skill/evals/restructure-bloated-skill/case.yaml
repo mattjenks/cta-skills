@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: restructure-bloated-skill
+expected_outcome: |
+  Concrete limits: description at most 400 characters stating what and when, body at most 150 lines, detail moved into references of at most 300 lines each that the body names with when to read them, and evals added.
