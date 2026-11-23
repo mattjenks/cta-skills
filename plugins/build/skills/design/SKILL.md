@@ -1,10 +1,10 @@
 ---
 name: design
-description: Starts new work by finding out what the owner actually wants, laying out approaches, writing the design into the project's knowledge-base folder, and stopping for approval. Use before building any feature, change or fix ("design this", "let's build", "I want to add"); also classifies the change small or normal.
+description: Starts new work by finding out what the owner actually wants, laying out approaches, writing the design into the project's knowledge-base folder, and stopping for approval. Use before building any feature, change or fix ("design this", "let's build", "I want to add"); also classifies the change small or normal (large) and records its accepted gaps.
 argument-hint: "[topic or request]"
 ---
 
-<!-- Adapted from obra/superpowers skills/brainstorming/SKILL.md and builder-check-prompt.md (MIT) -->
+<!-- Adapted from obra/superpowers skills/brainstorming/SKILL.md (MIT) -->
 
 # Design
 
@@ -21,7 +21,9 @@ Run from the code repo, with `${CLAUDE_PLUGIN_ROOT}/scripts/kbwork.py` (stdlib, 
      `/core:init-kb`, and do nothing else.
    - `slug` is null (the repo is unmapped): ask the owner for a project slug (lowercase, digits, hyphens),
      then re-run with `--slug <slug>`, which calls `record_project` and writes it under `[projects]`.
-2. Pick a `<topic>` slug for this change (lowercase, hyphens, at most 5 words) and say it.
+2. Pick a `<topic>` slug for this change (lowercase, hyphens, at most 5 words) and say it. The slug ends up
+   in folder and branch names, so it never contains a word the guards match on paths: `false-positive`,
+   `accepted-risk`, `access-code`, `credentials`. Say "fp" or "guard-noise" instead.
 3. `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/kbwork.py" open --kb <kb> --slug <slug> --topic <topic>
    --projects-dir <projects_dir> --repo "$PWD"`. It runs `open_build` and `write_pointer`: it creates the knowledge-base worktree and branch
    `build/<slug>-<date>-<topic>` from the knowledge base's default branch, and writes the active-build
@@ -51,20 +53,22 @@ trades, the pick and why), the parts the owner decided as they decided them, you
 and what is left to the builder. A talented builder who cannot reach the owner must be able to plan from it.
 Add a `reqs.md` row for each new requirement in the same folder, following the project's existing format.
 
-**Builder check.** For a normal change, dispatch a fresh subagent on sonnet (model map:
-`../implement/references/models.md`) with `references/builder-check.md`, filling in the document path. Do not
-hand over the document until it returns. Sort its questions: already answered (put the answer in the
-document), minor (settle it, mark it as your call), the owner's (bring them in one message, most important
-first, then update the document). One round only. A small change skips the check.
+**Accepted gaps.** End the design with an `## Accepted gaps` section: what this change deliberately does not
+handle (inputs, attack routes, edge cases) and why that is good enough. Reviewers grade against it, so a
+finding inside an accepted gap is not a defect. A clear line here is what keeps reviews from running on.
 
 ## 5. Classify and stop
 
-Count against the rule: a **small change** is **5 files or fewer** changed, no new production dependency,
-and no path matching **auth, secrets, hooks or CI** (`.github/`, `hooks/`, names containing `auth`, `secret`, `token`, `credential`). New build or development dependencies do not count. Otherwise
-it is a **normal change**.
+Count against the rule: a **small change** is **5 files or fewer** changed (tests and docs not counted),
+no new production dependency, and no change to a **security boundary**. Anything else is a **normal change**
+(a large one). New build or development dependencies do not count.
+
+A **security boundary** is code that decides allow or block (guard hooks, permission rules), handles secrets
+or credentials, does authentication or authorization, or changes CI or release config. It is judged by what
+the code does, not by its path: a notify or persona hook is not one; a secrets guard is.
 
 State the classification with the reason at the stop: the estimated files and which, the production
-dependencies (none, or each name), and any sensitive paths. Use exactly "Small: plan review skipped" or
+dependencies (none, or each name), and any security boundary touched. Use exactly "Small: plan review skipped" or
 "Normal: plan review required". The owner can override either way; their word replaces the rule.
 
 **STOP: the owner approves the design.** Present the path, the approach, your marked calls and the
@@ -82,11 +86,11 @@ for changes, edit and ask again.
    the knowledge base's default branch; the owner merges through a PR. If the knowledge base has no remote,
    skip the push and say so once. If the push fails, report the error once, keep the commit and continue;
    the owner can push later.
-4. Hand off: normal change goes to `/build:plan`; small change goes straight to `/build:implement`. If
+4. Hand off: normal change goes to `/build:plan` (which runs the plan-stage security review); small change
+   goes straight to `/build:implement`. If
    implementation will add a production dependency, that still stops for the owner (see `/build:plan`).
 
 ## Resources
 
 - `references/conversation.md`: how to ask, play back, and size the work. Read before the first question.
-- `references/builder-check.md`: the prompt for the builder check. Read when dispatching it.
 - Model map: `../implement/references/models.md`.

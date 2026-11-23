@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Opens the pull requests for a finished build - checks that security.json matches the branch head with nothing open, stops once for the owner's answers on proposed false positives, pushes the code and knowledge-base branches and opens both PRs linked to each other. Use after /build:review, or when asked to "open the PRs" or "ship it".
+description: Opens the pull requests for a finished build - checks that security.json matches the branch head, lists open findings, proposed false positives and known gaps in the PR for the owner to decide before merge, pushes the code and knowledge-base branches and opens both PRs linked to each other. Use after /build:review, or when asked to "open the PRs" or "ship it".
 argument-hint: "[base-branch]"
 ---
 
@@ -23,27 +23,27 @@ branch (design, plan, ledger, security record, retro). Merges are the owner's; t
 Run `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/secure.py" verify --repo "$PWD" --base BASE --file <folder>/security.json`.
 It never writes. Exit codes:
 
-- 4: the record is missing or its `diff_hash` does not match the branch head. Point to `/build:secure`
-  (a rescan) and stop. Never open a PR on a record for a different tree.
-- 5: findings are still `open`. List them, point to `/build:secure`, stop.
-- 6: only `proposed-false-positive` entries wait on the owner: continue to section 2.
-- 0: continue to section 3.
+- 4: the record is missing or its `diff_hash` does not match the branch head. Rescan with `secure.py scan`
+  (as `/build:review` section 4 does) and verify again. Never open a PR on a record for a different tree.
+- 5: findings are still `open`. Do not stop: each goes into the PR's **Open findings** (section 2).
+- 6: `proposed-false-positive` entries wait on the owner. Do not stop: they go into the PR (section 2).
+- 0: continue.
 
-## 2. One STOP for proposed false positives
+## 2. Findings for the owner, in the PR
 
-Only the owner closes a finding as `false-positive` or `accepted-risk`, and the finding-guard hook blocks every
-other writer. Never write `false-positive` or `accepted-risk` yourself, by any route.
+The build does not stop for findings; the owner decides at the PR, before merge. Only the owner closes a
+finding as `false-positive` or `accepted-risk`, and the finding-guard hook blocks every other writer.
+Never write `false-positive` or `accepted-risk` yourself, by any route.
 
-1. Show **every** `proposed-false-positive` entry in one message, the whole batch at once: `id`, severity,
-   `path:line`, the message and your recorded reasoning. **STOP** once and ask for each entry: false-positive,
-   accepted-risk (with the reason), or still real (it goes back to `/build:secure`).
-2. Record the owner's answers verbatim, with their words, in `<folder>/closures.md` (one section per `id`)
-   and commit it in the knowledge-base worktree.
-3. Tell the owner the exact edit they apply to `<folder>/security.json` themselves: per `id`, set `status`,
-   `reason` (their words) and `closed_by` (their name). Offer a one-line command they can run, and say the
-   hook will block the assistant from doing it. Wait for them to say it is done.
-4. Re-verify with the same `verify` command: it must now exit 0. Any other exit goes back to section 1; a
-   record the owner has not updated is not a pass.
+1. Build the PR body's **Open findings** from `<folder>/pr-notes.md` (from `/build:review`) plus every
+   `open` entry in `security.json`: `id`, severity, `path:line`, the message, what was tried.
+2. List every `proposed-false-positive` entry there too, the whole batch at once, with your recorded
+   reasoning and the exact edit the owner applies to `<folder>/security.json` themselves before merging:
+   per `id`, set `status`, `reason` (their words) and `closed_by` (their name). Say the hook blocks the
+   assistant from making it.
+3. If the owner answers in the session, record their answers verbatim in `<folder>/closures.md` (one
+   section per `id`) and commit it; after they apply the edit, re-verify with the same `verify` command.
+4. Add the **Known gaps** from `pr-notes.md`.
 
 ## 3. Push
 
@@ -56,7 +56,8 @@ other writer. Never write `false-positive` or `accepted-risk` yourself, by any r
 ## 4. Open both PRs
 
 1. Code PR: `gh pr create --base BASE --head <branch> --title "<conventional title>" --body-file <body>`. The
-   body gives the why, the changes, the validation and security result, and a link to the design.
+   body gives the why, the changes, the validation and security result, the Open findings and Known gaps
+   (section 2), and a link to the design.
 2. Knowledge-base PR: `gh pr create` in the worktree against the knowledge base's default branch, titled
    `docs(<slug>): <topic> build record`.
 3. Edit each PR body (`gh pr edit --body-file`) so each links the other. Report both URLs.

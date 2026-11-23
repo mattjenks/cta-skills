@@ -47,7 +47,7 @@ chunk by asking what is wrong or missing. For anything they will look at, add a 
 ## Size the work
 
 Say how big it is in plain words once an approach is picked. A small change gets a short design (what you
-covered together, a line or two per point, no builder check). A project gets the full design. If it grows
+covered together, a line or two per point). A project gets the full design, and its accepted gaps. If it grows
 mid-task, say so and step up. If it is really several projects, agree an order and design them one at a time.
 
 ## Red flags

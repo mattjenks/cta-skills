@@ -1,6 +1,6 @@
 ---
 name: review
-description: Runs the final whole-branch review before the PR - one deep review of the full diff against the spec, the ledger's deferred minor findings triaged, one fix wave and one scoped re-review. Use after /build:implement and /build:secure, or when asked to "review the branch", "final review" or "is this ready for a PR".
+description: Runs the one code review before the PR - a single opus pass over the whole branch for spec, quality and security (the nine checks, graded against the design's accepted gaps and the plan's threat model), at most two fix rounds, and what is left listed for the PR. Use after /build:implement and /build:secure, or when asked to "review the branch", "final review" or "is this ready for a PR".
 argument-hint: "[base-branch]"
 ---
 
@@ -9,59 +9,65 @@ argument-hint: "[base-branch]"
 
 # Review
 
-The last review before the PR: the whole branch, not one task. Per-task reviews catch local defects; this one
-catches what only shows across tasks. Model map: `../implement/references/models.md`.
+The one code review, for both sizes: spec, quality and security in a single pass over the whole branch. It
+grades against a stated line, the design's `Accepted gaps` and, for a Normal change, the plan's `Threat model
+and accepted gaps`, so it finds what matters and stops there. Model map: `../implement/references/models.md`.
 
 ## 0. Preconditions
 
 1. `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/kbwork.py" pointer --repo "$PWD"` gives the active build
    (`folder`, topic). `null` means no build is open: stop and point to `/build:design`.
 2. Every ledger row (`<folder>/progress.md`) is `done`, and `/build:validate` passes on the branch now. If
-   `security.json` is missing or has `open` entries, say so and point to `/build:secure`; do not review past it.
+   `security.json` is missing, the scanners have not run: point to `/build:secure`. Scanner entries still
+   `open` do not stop the review; they go to the PR.
 3. Base = the argument, else the default branch. The code repo is on the build branch and clean.
 
 ## 1. Gather
 
 - Review package: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" package PLAN BASE HEAD` (the whole
   branch range). Paths only, never pasted content.
-- Deferred minors: every `minor (deferred)` line in the ledger, collected into one file in the workspace.
+- Open items: every `open at PR` line in the ledger, collected into one file in the workspace.
 - Skill changes: list the `SKILL.md` files the diff adds or changes, and for each run core's checker:
   `uv run --script <check_skill.py> <skill-dir>`. The script belongs to the `core` plugin, so find it from
   this plugin's root: `${CLAUDE_PLUGIN_ROOT}/../core/skills/create-skill/scripts/check_skill.py` in a repo
   checkout, or `${CLAUDE_PLUGIN_ROOT}/../../core/*/skills/create-skill/scripts/check_skill.py` when the
   marketplace installed both plugins side by side (the installed layout is `<marketplace>/<plugin>/<version>/`;
-  take the newest version). If neither exists the script is missing: report that as an Important finding
+  take the newest version). If neither exists the script is missing: report that as a High finding
   and never skip the check silently. A changed `SKILL.md` with no evals, or any budget failure it prints, is
-  an Important finding (`references/final-review.md`).
+  a High finding (`references/final-review.md`).
 
-## 2. Final review
+## 2. The code review
 
 Dispatch one reviewer subagent on opus (model map: `../implement/references/models.md`) with the prompt in
-`references/final-review.md`, passing the package, spec and plan paths, the minors file and the check_skill
-output. It grades findings Critical, Important or Minor and triages each deferred minor: fix before merge, or
-leave. It writes no code.
+`references/final-review.md`, passing the package, the design (with its Accepted gaps), the plan for a
+Normal change, the open-items file, the check_skill output and `../secure/references/checklist.md` for the
+nine checks. It grades findings Critical, High, Medium or Low, says which fall inside an accepted gap, and
+writes no code. Add each security finding to `security.json` as `open` (`tool: checklist`).
 
-## 3. One fix wave
+## 3. Fix, at most two rounds
 
-Collect every Critical and Important finding plus the minors triaged "fix before merge" into one findings
-file. Dispatch one builder per `../implement/references/models.md` (haiku for one or two files with exact
-fixes, else sonnet) with `../implement/references/implementer-prompt.md`, tests first, one commit per logical
-fix, never rewriting history. Run `/build:validate`. A fix that adds a production dependency stops for the
-owner as in `/build:implement`. This is one wave: no second one.
+Collect every Critical and High finding into one findings file; add a Medium only when the fix is in code
+the round already touches. Dispatch one builder per `../implement/references/models.md` (haiku for one or
+two files with exact fixes, else sonnet) with `../implement/references/implementer-prompt.md`, tests first,
+one commit per logical fix, never rewriting history. Run `/build:validate`. A fix that adds a production
+dependency stops for the owner as in `/build:implement`. Mark fixed security entries `fixed` in
+`security.json`.
 
-## 4. One scoped re-review
+Then one scoped re-review: write the fix diff from the commit range (`workspace.py package PLAN
+<pre-fix-sha> HEAD`) and dispatch one re-reviewer on sonnet (model map: `../implement/references/models.md`)
+with `../implement/references/re-review-prompt.md`. CHANGES REQUESTED: one more round, the second and last.
 
-Write the fix diff from the commit range (`workspace.py package PLAN <pre-fix-sha> HEAD`), then dispatch one
-re-reviewer on sonnet (model map: `../implement/references/models.md`; opus only when the final reviewer found a
-Critical) with `../implement/references/re-review-prompt.md`, passing the findings and fix diff paths. It checks
-the fixes and what they touched, nothing else.
+## 4. Hand to the PR
 
-- APPROVED: push the code branch, record the verdict and the leftover minors in the ledger, say the branch is
-  ready for `/build:pr`.
-- CHANGES REQUESTED: stop. List what is still open for the owner; do not start another wave. If the fix
-  changed code after `/build:secure`, say it should run again.
+The review never stops the build. After the last round:
+
+1. Rescan so the record matches the tree: `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/secure.py" scan
+   --repo "$PWD" --base BASE --out <folder>/security.json`.
+2. Write `<folder>/pr-notes.md`: **Open findings** (every Critical or High still open, with file, line and
+   what the rounds tried; the owner decides each before merge) and **Known gaps** (the accepted gaps the
+   review confirmed, one line each). Mediums and Lows not fixed are dropped, never filed for later.
+3. Push the code branch, record the verdict in the ledger, and say the branch is ready for `/build:pr`.
 
 ## Resources
 
-- `references/final-review.md`: the reviewer prompt, grading and the minor-triage rules. Read before the
-  final review dispatch.
+- `references/final-review.md`: the reviewer prompt and the grading. Read before the review dispatch.

@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Turns an approved design into a task plan with interfaces, tests and review focus, then stops for approval. Use after /build:design approves a normal change, or when asked to "write the plan", "plan this out" or "break this into tasks". Small changes skip it. Stops separately on any new production dependency.
+description: Turns an approved design into a task plan with interfaces, tests and review focus, has it security-reviewed with the design, then stops for approval. Use after /build:design approves a normal change, or when asked to "write the plan", "plan this out" or "break this into tasks". Small changes skip it. Stops separately on any new production dependency.
 argument-hint: "[topic]"
 ---
 
@@ -21,7 +21,7 @@ design, which tests prove each task. It lives in the knowledge base, never in th
    and `reqs.md` whole. Find the `Status:` line under the design's title. If it is missing or does not say
    `Status: approved`, refuse: the design is not approved, so go back to `/build:design`.
 3. **Small change skips this skill.** If the line says `Status: approved — Small`, go to `/build:implement` with the design as the spec. If the plan grows past the
-   small rule (more than 5 files, a production dependency, a sensitive path), say so and continue here.
+   small rule (more than 5 files, a production dependency, a security boundary), say so and continue here.
 
 ## 1. Research
 
@@ -61,10 +61,17 @@ For each, present **name, version, license and the reason** it is needed, and wh
 it to the plan's tasks as settled until the owner says yes; a no means the plan changes. No new production
 dependency: say so in one line and go on.
 
-## 4. Stop for the plan
+## 4. Security review of the design and plan
+
+Run `/build:secure plan`. It reviews the design and this plan together, before any code exists, and writes a
+`## Threat model and accepted gaps` section into `plan.md`: what an attacker or a malformed input could
+reach, what the plan defends, and what it deliberately accepts. Plan changes it asks for go into the tasks
+now. That section is the line the final code review grades against.
+
+## 5. Stop for the plan
 
 **STOP: the owner approves the plan.** Give the path, the task count with one line per task, the Review Focus,
-and any dependency verdicts. Wait. Do not start implementation on silence. Requested changes: edit and ask again.
+the threat model and accepted gaps, and any dependency verdicts. Wait. Do not start implementation on silence. Requested changes: edit and ask again.
 
 After approval, commit and push the knowledge-base worktree (`docs(<slug>): plan for <topic>`; push to the
 build branch only, never the knowledge base's default branch), then hand off to `/build:implement`.

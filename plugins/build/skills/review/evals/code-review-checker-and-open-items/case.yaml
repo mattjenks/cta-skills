@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: code-review-checker-and-open-items
+expected_outcome: |
+  The assistant runs the one code review on opus, locates core's check_skill.py from the plugin root, and carries the ledger's open-at-PR items into the review.

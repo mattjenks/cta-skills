@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: fix-rounds-never-stop
+expected_outcome: |
+  After the second fix round the scoped sonnet re-review still has a High open; the assistant does not start a third round or stop, and writes the finding into pr-notes.md as an Open finding for the owner.

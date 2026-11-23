@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Builds an approved design or plan task by task with subagents, tests first, a review and fix loop per task, and a commit and push after each. Use after /build:design (Small) or /build:plan (Normal) is approved, or when asked to "implement this", "build it" or "start the tasks". Refuses unapproved work.
+description: Builds an approved design or plan task by task with subagents, tests first, a spec check and at most two fix rounds per task on Normal changes, and a commit and push after each. Use after /build:design (Small) or /build:plan (Normal) is approved, or when asked to "implement this", "build it" or "start the tasks". Refuses unapproved work.
 argument-hint: "[topic]"
 ---
 
@@ -53,15 +53,15 @@ Repeat for each task in order, never in parallel.
    fail, implements, runs the suite, commits its task work locally (a conventional message, never pushed),
    and reports `DONE`, `DONE_WITH_CONCERNS`,
    `NEEDS_CONTEXT` or `BLOCKED`. Right after its commit, record the ledger `head` (that commit's sha). Answer `NEEDS_CONTEXT` from the design; escalate `BLOCKED` to the owner.
-5. **Review.** Once the builder has committed, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" package PLAN BASE HEAD` writes the
-   review package (diff, brief, Review Focus). Dispatch a reviewer subagent on sonnet by default (map: `references/models.md`)
-   with `references/reviewer-prompt.md`: one pass for spec and quality, with findings graded Critical,
-   Important and Minor.
-6. **Fix loop.** Anything Critical or Important goes through `references/fix-loop.md`: up to 5 rounds, the
-   re-review uses `references/re-review-prompt.md`, and rounds 4 and 5 move to a fresh, more capable model.
-   A Critical finding from a sonnet reviewer sends its re-review to the most capable model
-   (`references/fix-loop.md`, `references/models.md`).
-   Still failing after round 5: mark the task `blocked` and stop for the owner with the open findings.
+5. **Review.** Small change: no per-task review; go to validate. The one code review happens in
+   `/build:review`. Normal change: once the builder has committed,
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" package PLAN BASE HEAD` writes the review package
+   (diff, brief, Review Focus). Dispatch a reviewer subagent on sonnet (map: `references/models.md`) with
+   `references/reviewer-prompt.md`: a spec check only, not spec and quality, which the code review covers.
+6. **Fix loop.** Critical or Important findings go through `references/fix-loop.md`: at most 2 rounds,
+   re-review with `references/re-review-prompt.md` on sonnet. After round 2 the build does not stop: what
+   is still open is recorded as `open at PR` in the ledger and goes into the PR description for the owner
+   to decide before merge (`references/fix-loop.md`, `references/models.md`).
 7. **Validate.** Run `/build:validate`. A FAIL goes back to the builder as a fix round.
 8. **Dependency check.** Before the push, after the fix loop and validate (a fix can add one), read the
    whole task range `BASE..HEAD` (the builder's commit and every fix commit) for a new production dependency: any manifest or lockfile change
@@ -80,7 +80,7 @@ Repeat for each task in order, never in parallel.
 ## 3. Finish
 
 When every task is `done`: run `/build:validate` once over the whole branch, then tell the owner the build is
-ready for `/build:secure` and `/build:review`. Do not start them uninvited.
+ready for `/build:secure` (scanners) and `/build:review` (the one code review). Do not start them uninvited.
 
 ## 4. Hand-off
 
@@ -98,6 +98,6 @@ If the app has no hand-off tool, say so, give the owner that brief to paste into
 
 - `references/models.md`: the model map. Read before every dispatch.
 - `references/implementer-prompt.md`: the builder's prompt, tests first.
-- `references/reviewer-prompt.md`: the reviewer's prompt, spec and quality, severities.
+- `references/reviewer-prompt.md`: the per-task spec check (Normal only), severities.
 - `references/re-review-prompt.md`: the re-review of a fix, small diff.
-- `references/fix-loop.md`: rounds, escalation, when to stop.
+- `references/fix-loop.md`: two rounds, then `open at PR`.

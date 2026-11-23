@@ -25,7 +25,7 @@ Categories: correctness, tests, spec fit, security, maintainability, docs. Count
 and `security.json`; say which source each number came from.
 
 ## Fix rounds
-Per task: rounds used, escalated to a stronger model, any task that ended `blocked`.
+Per task and for the code review: rounds used (two at most), and what was left open for the PR.
 
 ## Gates fired
 Which gates stopped or blocked work: commit gate, scanner stop, dependency stop, owner closures.

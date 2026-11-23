@@ -2,21 +2,26 @@
 
 # Security checklist
 
-## Reviewer prompt
+## Plan-review prompt (`/build:secure plan`)
 
 Dispatch on opus (`../../implement/references/models.md`). Pass paths, never pasted content.
 
 ```text
-You are doing a security review of one branch in [REPO_PATH].
+You are doing the security review of a planned change in [REPO_PATH], before any code is written.
 
-Read [PACKAGE_PATH] (the diff and the design context) and [SECURITY_JSON_PATH] (what scanners already
-found: do not repeat those). Open the changed files and the code they call; the diff alone hides
-callers. Check every item below against the code this branch adds or changes. Report only issues you can
-trace to a concrete input an attacker or a malformed file could control. Do not edit files.
+Read [DESIGN_PATH] (with its Accepted gaps) and [PLAN_PATH]. Open the existing code the plan changes and
+the code that calls it. Apply each of the nine checks below to what the plan will build. Report only
+routes you can trace to a concrete input an attacker or a malformed file could control. Do not edit files.
 
-For each finding: severity (Critical, High, Medium, Low), file and line, the exploit in one sentence, and
-the smallest fix. End with `Verdict: CLEAN` or `Verdict: FINDINGS` and the counts.
+Return three parts:
+1. Threat model: who or what supplies untrusted input, and what it can reach once this is built.
+2. Plan changes: for each real route, severity (Critical, High, Medium, Low), the task it belongs to, the
+   attack in one sentence, and the smallest change to the plan that closes it.
+3. Accepted gaps: routes not worth closing in this change, each with one line on why that is good enough.
+   A guard can always be probed one more way; name the line instead of chasing every permutation.
 ```
+
+The code review in `/build:review` applies the same nine checks to the diff, graded against part 3.
 
 ## The nine checks
 

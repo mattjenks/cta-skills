@@ -33,6 +33,11 @@ pins it to the task that owns the code. An empty section means you checked and f
 
 What a reasonable reader might assume is included but is not (and what must not change).
 
+## Threat model and accepted gaps
+
+Written by `/build:secure plan` after the tasks exist: what an attacker or malformed input can reach, what
+the plan defends, and the gaps it accepts on purpose. The final code review grades against this section.
+
 ---
 ```
 

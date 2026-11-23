@@ -74,7 +74,8 @@ def test_design_stop_and_classification():
         r"Small: plan review skipped",
         r"5 files or fewer",
         r"no new production dependency",
-        r"auth, secrets, hooks or CI",
+        r"security boundary",
+        r"allow/block|allow or block",
         r"override",
     )
 
@@ -84,9 +85,10 @@ def test_design_commits_and_pushes_the_worktree_after_approval():
     has("design", r"never (push|check out)[^.]*(main|default)|never push to")
 
 
-def test_design_builder_check_names_sonnet_and_models():
-    has("design", r"builder check", r"sonnet", r"\.\./implement/references/models\.md")
-    assert (SKILLS / "design/references/builder-check.md").is_file()
+def test_design_has_accepted_gaps_and_no_builder_check():
+    has("design", r"Accepted gaps", r"\.\./implement/references/models\.md")
+    assert "builder check" not in text("design").lower()
+    assert not (SKILLS / "design/references/builder-check.md").exists()
 
 
 def test_design_credits_superpowers():
@@ -214,9 +216,9 @@ def test_implement_loop_shape():
     has(
         "implement",
         r"tests? first",
-        r"spec and quality|spec \+ quality",
-        r"5 rounds|five rounds",
-        r"fresh",
+        r"spec check",
+        r"2 rounds|two rounds",
+        r"open at PR",
         r"commit",
         r"push",
         r"worktree",
@@ -252,11 +254,12 @@ def test_implement_reviewer_default_sonnet_opus_narrow():
     assert re.search(r"fable[^.]*owner'?s? (explicit )?approval", models, re.I)
 
 
-def test_implement_references_exist_and_fix_loop_is_five_rounds():
+def test_implement_references_exist_and_fix_loop_is_two_rounds():
     for name in ("implementer-prompt.md", "reviewer-prompt.md", "re-review-prompt.md", "fix-loop.md"):
         assert (SKILLS / "implement/references" / name).is_file(), name
     fix = (SKILLS / "implement/references/fix-loop.md").read_text()
-    assert re.search(r"rounds? 4", fix) and re.search(r"opus", fix)
+    assert re.search(r"[Tt]wo rounds", fix) and re.search(r"[Nn]ever start round 3", fix)
+    assert re.search(r"open at PR", fix) and re.search(r"Opus is not used", fix)
 
 
 def test_implement_credits_sources():
@@ -351,11 +354,11 @@ def test_rereview_floor_is_sonnet_not_haiku():
         assert "models.md" in body, name
 
 
-def test_critical_from_sonnet_reviewer_sends_rereview_to_opus():
+def test_fix_loop_never_blocks_a_task_on_review_findings():
     fix = (SKILLS / "implement/references/fix-loop.md").read_text()
-    assert re.search(r"Critical[^.]*sonnet[^.]*re-review[^.]*opus", fix, re.I | re.S)
+    assert re.search(r"[Nn]ever mark a task `?blocked`? for open review findings", fix)
     skill = (SKILLS / "implement/SKILL.md").read_text()
-    assert re.search(r"Critical[^.]*re-review[^.]*(fix-loop\.md|models\.md)", skill, re.S)
+    assert re.search(r"open at PR", skill) and "fix-loop.md" in skill
 
 
 def test_implement_small_path_has_a_working_workspace_story():
@@ -428,10 +431,11 @@ def test_review_final_review_shape():
         "review",
         r"final-review\.md",
         r"opus.{0,80}models\.md",
-        r"minor \(deferred\)",
-        r"triage",
-        r"one fix wave",
-        r"one scoped re-review|scoped re-review",
+        r"open at PR",
+        r"two fix rounds|2 fix rounds|at most two",
+        r"scoped",
+        r"pr-notes\.md",
+        r"Known gaps",
         r"sonnet",
         r"Critical",
         r"check_skill\.py",
@@ -482,13 +486,14 @@ def test_pr_verifies_security_json_with_the_script():
     has("pr", r"secure\.py\" verify|secure\.py verify", r"diff_hash", r"open")
 
 
-def test_pr_stops_once_with_the_whole_proposed_batch_and_never_writes_closures():
+def test_pr_lists_findings_for_the_owner_and_never_writes_closures():
     has(
         "pr",
         r"proposed-false-positive",
-        r"STOP",
-        r"once",
-        r"every|all|whole batch",
+        r"Do not stop",
+        r"Open findings",
+        r"Known gaps",
+        r"whole batch",
         r"verbatim",
         r"closed_by",
         r"never write `?false-positive`?|never write [^.]*accepted-risk",
