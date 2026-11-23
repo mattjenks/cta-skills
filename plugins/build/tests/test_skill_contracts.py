@@ -299,13 +299,32 @@ def _step_positions(body, *titles):
     return [body.index(f"**{t}.**") for t in titles]
 
 
-def test_implement_dependency_check_runs_after_fix_loop_and_validate_before_commit():
+def test_implement_dependency_check_runs_after_fix_loop_and_validate_before_push():
     body = (SKILLS / "implement/SKILL.md").read_text()
-    pos = _step_positions(body, "Fix loop", "Validate", "Dependency check", "Commit and push")
+    pos = _step_positions(body, "Fix loop", "Validate", "Dependency check", "Push and ledger")
     assert pos == sorted(pos)
     check = body[pos[2] : pos[3]]
-    assert re.search(r"immediately before the commit|just before the commit", check, re.I)
+    assert re.search(r"before the push", check, re.I)
+    assert re.search(r"BASE\.\.HEAD", check)
+    assert re.search(r"STOP", check)
     assert re.search(r"fix", check, re.I)
+
+
+def test_builder_commits_locally_and_package_follows_the_commit():
+    body = (SKILLS / "implement/SKILL.md").read_text()
+    build, review = _step_positions(body, "Build", "Review")
+    assert build < review
+    assert re.search(r"commits? (its|the) (task )?work", body[build:review], re.I)
+    assert not re.search(r"commits nothing", body)
+    assert "package PLAN BASE HEAD" in body[review:]
+    prompt = (SKILLS / "implement/references/implementer-prompt.md").read_text()
+    assert re.search(r"commit[^.\n]*(conventional|locally)", prompt, re.I)
+    assert re.search(r"do not push", prompt, re.I)
+    assert not re.search(r"do not commit", prompt, re.I)
+
+
+def test_no_history_rewriting_in_implement():
+    assert not re.search(r"\b(amend\w*|squash\w*|rebas\w*|force[- ]push\w*)\b", text("implement"), re.I)
 
 
 def test_implement_stops_on_default_branch_and_unknown_usage():
@@ -320,7 +339,7 @@ def test_implement_stops_on_default_branch_and_unknown_usage():
 def test_rereview_floor_is_sonnet_not_haiku():
     models = (SKILLS / "implement/references/models.md").read_text()
     row = next(l for l in models.splitlines() if "re-review" in l.lower() and l.startswith("|"))
-    assert row.rstrip().endswith("| opus |") or "haiku" not in row
+    assert "haiku" not in row and row.rstrip().endswith("| sonnet |")
     haiku_row = next(l for l in models.splitlines() if l.startswith("| Builder when"))
     assert "re-review" not in haiku_row.lower()
     assert re.search(r"re-review[^.]*sonnet", models, re.I)

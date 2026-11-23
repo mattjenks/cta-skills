@@ -23,7 +23,9 @@ Rules:
 - Touch only the files the brief lists. If you need another, say why in your report.
 - Use the exact names, signatures and values from the brief.
 - Do not add a dependency. If you think you need one, stop and report NEEDS_CONTEXT.
-- Do not commit and do not push: the controller does both after review.
+- Commit your finished work locally when the suite is green: the tests first, then the code, with a
+  conventional message naming the task. Do not push and never rewrite history; a fix round adds
+  new commits.
 - No personal data, no real names in tests; use neutral names.
 - If the brief is unclear, or the code contradicts it, stop and report NEEDS_CONTEXT with the question.
 
@@ -31,7 +33,7 @@ Run the full test suite before you report.
 
 Report, in this shape:
 Status: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
-Files: changed and created
+Files: changed and created; Commits: shas
 Tests: the command, and the RED then GREEN result for each new test
 Concerns: anything a reviewer should look at first
 ```

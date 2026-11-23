@@ -48,9 +48,10 @@ Repeat for each task in order, never in parallel.
 3. **Build.** Dispatch a builder subagent on the model the map in `references/models.md` names (haiku when
    the plan gives exact code, sonnet by default) with `references/implementer-prompt.md`, passing the brief
    path, the repo path and the Global Constraints path. The builder writes tests first and sees them
-   fail, implements, runs the suite, commits nothing, and reports `DONE`, `DONE_WITH_CONCERNS`,
+   fail, implements, runs the suite, commits its task work locally (a conventional message, never pushed),
+   and reports `DONE`, `DONE_WITH_CONCERNS`,
    `NEEDS_CONTEXT` or `BLOCKED`. Answer `NEEDS_CONTEXT` from the design; escalate `BLOCKED` to the owner.
-4. **Review.** `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" package PLAN BASE HEAD` writes the
+4. **Review.** Once the builder has committed, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" package PLAN BASE HEAD` writes the
    review package (diff, brief, Review Focus). Dispatch a reviewer subagent on sonnet by default (map: `references/models.md`)
    with `references/reviewer-prompt.md`: one pass for spec and quality, with findings graded Critical,
    Important and Minor.
@@ -60,18 +61,18 @@ Repeat for each task in order, never in parallel.
    (`references/fix-loop.md`, `references/models.md`).
    Still failing after round 5: mark the task `blocked` and stop for the owner with the open findings.
 6. **Validate.** Run `/build:validate`. A FAIL goes back to the builder as a fix round.
-7. **Dependency check.** Immediately before the commit, after the fix loop and validate (a fix can add one),
-   read the whole task diff for a new production dependency: any manifest or lockfile change
+7. **Dependency check.** Before the push, after the fix loop and validate (a fix can add one), read the
+   whole task range `BASE..HEAD` (the builder's commit and every fix commit) for a new production dependency: any manifest or lockfile change
    (`pyproject.toml`, `package.json`, `requirements*.txt`, `go.mod`, `Cargo.toml`, `Gemfile` and similar)
-   outside a dev group (development or build). **STOP:** present name, version, license and the reason, and
+   outside a dev group (development or build). **STOP before pushing:** present name, version, license and the reason, and
    wait for the owner. A dependency the approved plan already lists as verified is not new. Development and
    build dependencies do not count.
-8. **Commit and push.** Commit the code with a conventional message that names the task, in the code repo's
-   current branch, then push it. If the code repo is on its default branch, stop and tell the owner; never
-   commit or push there. Commit the ledger and any `reqs.md` change in the
-   knowledge-base worktree (`docs(<slug>): progress after task <n>`) and push the build branch. Never push
-   to the default branch, never touch the live knowledge-base checkout. A failed push: keep the commit, say
-   so in the ledger and tell the owner; do not retry in a loop.
+8. **Push and ledger.** Push the code branch (the commits already exist: the builder's, then one per fix
+   round; nothing is rewritten). If the code repo is on its default branch, stop and tell the owner; never
+   commit or push there. Then commit the ledger and any `reqs.md` change in the knowledge-base worktree
+   (`docs(<slug>): progress after task <n>`) and push the build branch. Never push to the default branch,
+   never touch the live knowledge-base checkout. A failed push: keep the commits, say so in the ledger and
+   tell the owner; do not retry in a loop.
 9. Mark the task `done` in the ledger with the head sha.
 
 ## 3. Finish
@@ -84,7 +85,7 @@ ready for `/build:secure` and `/build:review`. Do not start them uninvited.
 Context is state you can lose, the ledger is not. Hand off to a fresh session at a task boundary, never
 mid-task, when context passes 40% or after every 3 tasks, whichever comes first:
 
-1. Make sure the ledger is current and committed and pushed in the worktree, and the code is committed.
+1. Make sure the ledger is current and committed and pushed in the worktree, and the code is committed and pushed.
 2. Use the app's session hand-off with a short brief: the ledger path, the next task number, the topic, and
    the line "resume `/build:implement` from progress.md". Paths only, no pasted content.
 3. Stop. The new session reads the ledger and carries on at the next `todo` task.
