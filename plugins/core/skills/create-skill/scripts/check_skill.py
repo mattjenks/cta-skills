@@ -123,6 +123,15 @@ def check_opus(skill: Path) -> list[str]:
     ]
 
 
+def check_fable(skill: Path) -> list[str]:
+    """Fable is never a dispatch model; only models.md may mention it (to say so)."""
+    return [
+        f"{skill.name}: '{f.name}' names fable as a model"
+        for f in skill_files(skill)
+        if f.name != "models.md" and re.search(r"\bfable\b", f.read_text(), re.I)
+    ]
+
+
 def check_evals(skill: Path) -> list[str]:
     n = len(eval_cases(skill))
     return [f"{skill.name}: {n} eval cases under evals/ (min {EVALS_MIN})"] if n < EVALS_MIN else []
@@ -135,6 +144,7 @@ CHECKS = (
     check_linked,
     check_models,
     check_opus,
+    check_fable,
     check_evals,
 )
 

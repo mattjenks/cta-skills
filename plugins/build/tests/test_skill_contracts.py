@@ -22,15 +22,15 @@ def has(skill: str, *patterns: str) -> None:
         assert re.search(pattern, body, re.I | re.S), f"{skill}: missing /{pattern}/"
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan"])
+@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate"])
 def test_skill_exists_with_matching_name(skill):
     head = (SKILLS / skill / "SKILL.md").read_text().split("---")[1]
     assert re.search(rf"^name: {skill}$", head, re.M)
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan"])
+@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate"])
 def test_no_fable_and_no_persona(skill):
-    body = text(skill)
+    body = text(skill).replace((SKILLS / "implement/references/models.md").read_text(), "")
     assert not re.search(r"\bfable\b", body, re.I)
     assert not re.search(r"\bjax\b", body, re.I)
 
@@ -128,7 +128,9 @@ def test_plan_credits_both_sources():
     assert "Adapted from coleam00/skills" in body
 
 
-DISPATCH = re.compile(r"(dispatch\w*|spawn\w*|use an?)\s[^.]*\bsubagent", re.I | re.S)
+DISPATCH = re.compile(
+    r"(dispatch\w*|spawn\w*|use an?)\s[^.]*\b(subagents?|reviewers?|builders?|implementers?)\b", re.I | re.S
+)
 
 
 def undeclared_dispatches(body: str) -> list[str]:
@@ -142,7 +144,7 @@ def undeclared_dispatches(body: str) -> list[str]:
     return bad
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan"])
+@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate"])
 def test_every_dispatch_names_its_model_and_links_models_md(skill):
     assert undeclared_dispatches((SKILLS / skill / "SKILL.md").read_text()) == []
 
@@ -177,3 +179,114 @@ def test_design_push_step_handles_no_remote_and_failure():
     assert re.search(r"no (git )?remote", step, re.I)
     assert re.search(r"push fails|fails|failed", step, re.I)
     assert re.search(r"keep the commit", step, re.I)
+
+
+def test_dispatch_check_catches_reviewer_phrasing():
+    assert undeclared_dispatches("Dispatch a reviewer with the package.") != []
+    assert undeclared_dispatches("Dispatch a builder to do it.") != []
+
+
+# --- implement ---
+
+
+def test_implement_reads_the_approval_status():
+    has(
+        "implement",
+        r"Status: approved — Small",
+        r"Status: approved — Normal",
+        r"plan\.md",
+        r"/build:design",
+        r"refuse",
+    )
+
+
+def test_implement_never_asks_the_execution_method():
+    has("implement", r"never ask[^.]*(method|how to execute)|do not ask[^.]*(method|how to execute)")
+
+
+def test_implement_uses_helpers_and_ledger():
+    has("implement", r"workspace\.py", r"progress\.md", r"build\.folder|<folder>", r"package")
+
+
+def test_implement_loop_shape():
+    has(
+        "implement",
+        r"tests? first",
+        r"spec and quality|spec \+ quality",
+        r"5 rounds|five rounds",
+        r"fresh",
+        r"commit",
+        r"push",
+        r"worktree",
+    )
+
+
+def test_implement_production_dependency_stop():
+    has("implement", r"STOP", r"production dependenc", r"dev(elopment)? group", r"manifest")
+
+
+def test_implement_hand_off_and_usage_check():
+    has(
+        "implement",
+        r"40%",
+        r"every 3 tasks|three tasks",
+        r"hand[- ]?off",
+        r"usage",
+        r"usage cap|cap",
+        r"progress\.md",
+    )
+
+
+def test_implement_passes_paths_not_content():
+    has("implement", r"paths?, never (pasted )?content|never paste")
+
+
+def test_implement_reviewer_default_sonnet_opus_narrow():
+    has("implement", r"models\.md")
+    models = (SKILLS / "implement/references/models.md").read_text()
+    assert re.search(r"reviewer[^|]*\|\s*sonnet", models, re.I)
+    assert not re.search(r"touch hooks, guards, auth or secrets", models)
+    assert re.search(r"Critical", models)
+    assert re.search(r"fable[^.]*owner'?s? (explicit )?approval", models, re.I)
+
+
+def test_implement_references_exist_and_fix_loop_is_five_rounds():
+    for name in ("implementer-prompt.md", "reviewer-prompt.md", "re-review-prompt.md", "fix-loop.md"):
+        assert (SKILLS / "implement/references" / name).is_file(), name
+    fix = (SKILLS / "implement/references/fix-loop.md").read_text()
+    assert re.search(r"rounds? 4", fix) and re.search(r"opus", fix)
+
+
+def test_implement_credits_sources():
+    body = text("implement")
+    assert "Adapted from obra/superpowers" in body
+    assert "Adapted from coleam00/skills" in body
+
+
+def test_implement_builder_tests_first_and_prompts_use_paths():
+    impl = (SKILLS / "implement/references/implementer-prompt.md").read_text()
+    assert re.search(r"failing test|RED", impl)
+    assert re.search(r"report", impl, re.I) and re.search(r"DONE_WITH_CONCERNS", impl)
+    rev = (SKILLS / "implement/references/reviewer-prompt.md").read_text()
+    assert re.search(r"Critical", rev) and re.search(r"Important", rev)
+
+
+# --- validate ---
+
+
+def test_validate_detects_and_runs_commands():
+    has("validate", r"test", r"type", r"lint", r"pyproject|package\.json", r"Makefile|justfile")
+
+
+def test_validate_reports_one_verdict_with_failing_output():
+    has("validate", r"\bPASS\b", r"\bFAIL\b", r"failing output", r"one verdict|single verdict")
+
+
+def test_validate_reports_only_what_it_ran():
+    has("validate", r"evidence|ran this turn|fresh")
+
+
+def test_validate_credits_sources():
+    body = text("validate")
+    assert "Adapted from obra/superpowers" in body
+    assert "Adapted from coleam00/skills" in body

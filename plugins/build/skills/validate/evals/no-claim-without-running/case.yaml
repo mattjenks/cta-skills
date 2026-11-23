@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: no-claim-without-running
+expected_outcome: |
+  Never says it passes from memory of an earlier run.

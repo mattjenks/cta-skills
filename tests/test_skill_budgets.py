@@ -18,7 +18,7 @@ _spec.loader.exec_module(check_skill)
 
 # A folder with no SKILL.md (only references/) is a skill a later task has not created yet.
 # Skill dirs that hold only references/ until a later task adds the SKILL.md.
-REFERENCES_ONLY = {"build/implement"}
+REFERENCES_ONLY: set[str] = set()
 
 SKILLS = sorted(p.parent for p in ROOT.glob("plugins/*/skills/*/SKILL.md"))
 IDS = [f"{s.parent.parent.name}:{s.name}" for s in SKILLS]
@@ -61,6 +61,34 @@ def test_dispatches_name_a_model(skill):
 @pytest.mark.parametrize("skill", SKILLS, ids=IDS)
 def test_opus_only_in_allowed_roles(skill):
     _assert_clean(check_skill.check_opus(skill))
+
+
+@pytest.mark.parametrize("skill", SKILLS, ids=IDS)
+def test_fable_is_never_a_dispatch_model(skill):
+    _assert_clean(check_skill.check_fable(skill))
+
+
+def test_fable_flagged_outside_models_md(tmp_path):
+    skill = make_skill(tmp_path, body_text="Dispatch a subagent on fable (models.md).\n")
+    assert check_skill.check_fable(skill) == ["demo: 'SKILL.md' names fable as a model"]
+
+
+def test_fable_allowed_in_models_md(tmp_path):
+    skill = make_skill(tmp_path, refs={"models.md": 1})
+    (skill / "references" / "models.md").write_text("Fable needs owner approval.\n")
+    assert check_skill.check_fable(skill) == []
+
+
+def stale_entries(allowlist):
+    return [k for k in sorted(allowlist) if (ROOT / "plugins" / k.split("/")[0] / "skills" / k.split("/")[1] / "SKILL.md").exists()]
+
+
+def test_no_stale_references_only_entry():
+    assert stale_entries(REFERENCES_ONLY) == []
+
+
+def test_stale_allowlist_entry_detected():
+    assert stale_entries({"build/implement"}) == ["build/implement"]
 
 
 @pytest.mark.parametrize("skill", SKILLS, ids=IDS)
