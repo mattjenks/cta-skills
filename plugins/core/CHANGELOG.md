@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.2 — secrets guard prose false positive
+
+- Secrets guard: the three environment-dump builtins are matched only at command position (line start, after a separator, `$(`, `then`/`do`/`else`/`eval`/`exec`/`command`/`builtin`, or `-c`), so prose or notes that merely name one are no longer blocked. A dump builtin inside a backtick substitution in written file content is a known gap.
+
 ## 0.4.1 — telemetry backup config and fixes
 
 - New `[telemetry] backup_dir` config key: the folder the nightly telemetry backup copies to.

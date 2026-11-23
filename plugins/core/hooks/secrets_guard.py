@@ -22,7 +22,8 @@ lines (content inspection is per line for file reads); globs (`cat .en*`);
 indirect reads (`grep -r KEY .`); multi-argument or multi-line environment
 dumps in file content; Bash commands over 20,000 characters (e.g. large
 heredoc writes) and file content over 2,000,000 characters are blocked
-as too complex; Bash tokens that merely
+as too complex; a dump builtin inside a backtick substitution in written
+file content is not caught at the Write; Bash tokens that merely
 mention a secret-looking name (e.g. grep for access_code) are blocked.
 """
 
@@ -56,7 +57,14 @@ ENV_DUMP = (
     re.compile(r"\b" + _PRINT_ENV + r"\b", re.IGNORECASE),
     re.compile(r"^[ \t]*env[ \t]*[|>]", re.MULTILINE),  # shell script line: `env | ...`
     re.compile(r"/proc/(?:self|\d+)/environ"),
-    re.compile(r"\bexport[ \t]+-p\b|\bdeclare[ \t]+-x\b|\bcompgen[ \t]+-e\b"),
+    # The three env-dump builtins, only at command position (line start, after
+    # a separator or `$(`, a command-prefix word, or `-c`), so prose that names
+    # one does not trip it.
+    re.compile(
+        r"(?:^|[;&|({]|\$\(|\b(?:then|do|else|eval|exec|command|builtin)\b|-c)[ \t]*"
+        r"(?:export[ \t]+-p\b|declare[ \t]+-x\b|compgen[ \t]+-e\b)",
+        re.MULTILINE,
+    ),
     re.compile(r"\bENV\.to_h\b|\bENV\.to_a\b|\bputs[ \t]+ENV[ \t]*$", re.MULTILINE),
 )
 
