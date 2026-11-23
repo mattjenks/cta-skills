@@ -128,8 +128,52 @@ def test_plan_credits_both_sources():
     assert "Adapted from coleam00/skills" in body
 
 
-def test_plan_dispatches_name_sonnet_if_any():
-    body = text("plan")
-    if re.search(r"subagent|dispatch", body, re.I):
-        assert re.search(r"sonnet", body, re.I)
-        assert "models.md" in body
+DISPATCH = re.compile(r"(dispatch\w*|spawn\w*|use an?)\s[^.]*\bsubagent", re.I | re.S)
+
+
+def undeclared_dispatches(body: str) -> list[str]:
+    """Sentences that dispatch a subagent without naming a model and linking models.md."""
+    bad = []
+    for sentence in re.split(r"(?<=\.)\s+(?=[A-Z*])", body):
+        if DISPATCH.search(sentence) and not (
+            re.search(r"\b(haiku|sonnet|opus)\b", sentence, re.I) and "models.md" in sentence
+        ):
+            bad.append(" ".join(sentence.split()))
+    return bad
+
+
+@pytest.mark.parametrize("skill", ["prime", "design", "plan"])
+def test_every_dispatch_names_its_model_and_links_models_md(skill):
+    assert undeclared_dispatches((SKILLS / skill / "SKILL.md").read_text()) == []
+
+
+def test_dispatch_check_fails_when_a_dispatch_names_no_model():
+    fixture = (
+        "Dispatch a fresh subagent on sonnet (model map: `../implement/references/models.md`) to check.\n\n"
+        "Then dispatch a subagent to research the library.\n"
+    )
+    assert undeclared_dispatches(fixture) == ["Then dispatch a subagent to research the library."]
+
+
+# --- approval status line ---
+
+
+def test_design_writes_status_line_before_committing():
+    body = (SKILLS / "design/SKILL.md").read_text()
+    assert "Status: approved — Small" in body and "Status: approved — Normal" in body
+    assert body.index("Status: approved") < body.index("docs(<slug>): design for <topic>")
+
+
+def test_plan_reads_status_line_and_refuses_without_approval():
+    pre = (SKILLS / "plan/SKILL.md").read_text().split("## 1.")[0]
+    assert "Status: approved" in pre
+    assert re.search(r"missing|absent|no `?Status", pre, re.I)
+    assert re.search(r"refuse|stop", pre, re.I)
+    assert re.search(r"Small[^\n]*/build:implement", pre, re.S)
+
+
+def test_design_push_step_handles_no_remote_and_failure():
+    step = (SKILLS / "design/SKILL.md").read_text().split("## 6.")[1]
+    assert re.search(r"no (git )?remote", step, re.I)
+    assert re.search(r"push fails|fails|failed", step, re.I)
+    assert re.search(r"keep the commit", step, re.I)

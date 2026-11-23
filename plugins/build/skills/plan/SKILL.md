@@ -17,10 +17,10 @@ design, which tests prove each task. It lives in the knowledge base, never in th
 
 1. Read the active build: `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/kbwork.py" pointer --repo "$PWD"`.
    `null` means no build is open: run `/build:design` first.
-2. The project folder is `<worktree>/<projects_dir>/<slug>/`; the design is `<topic>-design.md` there. It
-   must be approved. Read it and `reqs.md` whole.
-3. **Small change skips this skill.** If the design stop classified it "Small: plan review skipped" and the
-   owner did not override, go to `/build:implement` with the design as the spec. If the plan grows past the
+2. The project folder is `<worktree>/<projects_dir>/<slug>/`; the design is `<topic>-design.md` there. Read it
+   and `reqs.md` whole. Find the `Status:` line under the design's title. If it is missing or does not say
+   `Status: approved`, refuse: the design is not approved, so go back to `/build:design`.
+3. **Small change skips this skill.** If the line says `Status: approved — Small`, go to `/build:implement` with the design as the spec. If the plan grows past the
    small rule (more than 5 files, a production dependency, a sensitive path), say so and continue here.
 
 ## 1. Research

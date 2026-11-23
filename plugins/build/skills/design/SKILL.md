@@ -28,7 +28,6 @@ Run from the code repo, with `${CLAUDE_PLUGIN_ROOT}/scripts/kbwork.py` (stdlib, 
    pointer (which also installs the commit gate). Keep the returned `worktree` and `folder`.
 
 Never check out, edit or commit in the live knowledge-base checkout; every write goes in the worktree.
-Without a git remote on the knowledge base, skip pushes and say so once.
 
 ## 2. Understand the intent
 
@@ -74,11 +73,16 @@ for changes, edit and ask again.
 
 ## 6. After approval
 
-1. Commit the design (and `reqs.md`) in the worktree: `git -C <worktree> add` the files, then a
+1. Record the approval where `/build:plan` and `/build:implement` can read it, even in another session: put
+   one line directly under the title of `<topic>-design.md`, `Status: approved — Small` or
+   `Status: approved — Normal`, matching the classification as the owner left it.
+2. Commit the design (and `reqs.md`) in the worktree: `git -C <worktree> add` the files, then a
    conventional `docs(<slug>): design for <topic>` commit.
-2. Push the worktree branch: `git -C <worktree> push -u origin build/<slug>-<date>-<topic>`. Never push to
-   the knowledge base's default branch; the owner merges through a PR.
-3. Hand off: normal change goes to `/build:plan`; small change goes straight to `/build:implement`. If
+3. Push the worktree branch: `git -C <worktree> push -u origin build/<slug>-<date>-<topic>`. Never push to
+   the knowledge base's default branch; the owner merges through a PR. If the knowledge base has no remote,
+   skip the push and say so once. If the push fails, report the error once, keep the commit and continue;
+   the owner can push later.
+4. Hand off: normal change goes to `/build:plan`; small change goes straight to `/build:implement`. If
    implementation will add a production dependency, that still stops for the owner (see `/build:plan`).
 
 ## Resources
