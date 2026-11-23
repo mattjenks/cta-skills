@@ -2,7 +2,7 @@
 
 ## 0.4.2 — secrets guard prose false positive
 
-- Secrets guard: the three environment-dump builtins are matched only at command position (line start, after a separator, `$(`, `then`/`do`/`else`/`eval`/`exec`/`command`/`builtin`, or `-c`), so prose or notes that merely name one are no longer blocked. A dump builtin inside a backtick substitution in written file content is a known gap.
+- Secrets guard: content written to prose files (`.md`, `.markdown`, `.txt`, `.rst`, `.adoc`) matches the three environment-dump builtins only at command position (line start, after a separator, `$(`, a prefix word such as `then`/`sudo`/`eval`, or `-c`), so notes that merely name one are no longer blocked. Bash commands and all other file content keep the unanchored match, so a dump held in a string (piped to a shell, `trap`, `os.system`, a Dockerfile `RUN`) is still caught. Known gaps: a prose file holding a dump away from command position passes the Write, and Bash commands that only mention a builtin are blocked.
 
 ## 0.4.1 — telemetry backup config and fixes
 
