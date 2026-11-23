@@ -54,6 +54,10 @@ def bins(tmp_path):
     tools.mkdir()
     for tool in ("uv", "git"):
         (tools / tool).symlink_to(shutil.which(tool))
+    # A login shell sources /etc/profile, and on macOS its path_helper rewrites PATH so
+    # /opt/homebrew/bin (real semgrep/gitleaks) lands ahead of the fake scanners. Keep the
+    # shell login but skip the profile files, so PATH is the same on every platform.
+    _exe(tools / "bash", f'#!/bin/sh\nexec {shutil.which("bash")} --noprofile "$@"\n')
     fake = tmp_path / "fakebin"
     fake.mkdir()
     _exe(fake / "semgrep", FAKE_SEMGREP)
@@ -469,6 +473,13 @@ def test_bypass_vector_ends_blocked(template, vector_repo, env):
     refused = gate_guard.check("Bash", {"command": command}, str(vector_repo))
     sh(command + "\nwait", vector_repo, env)
     assert refused or not leaked(vector_repo, env), command
+
+
+def test_fake_scanners_win_in_login_shell(bins, env, tmp_path):
+    """The vectors only prove anything if the hook scans with the fake scanners, even under `bash -l`."""
+    for tool in ("semgrep", "gitleaks"):
+        found = sh(f'bash -lc "command -v {tool}"', tmp_path, env).stdout.strip()
+        assert found == str(bins["fake"] / tool)
 
 
 # ---- chaining to the repo's own hooks --------------------------------------------------------
