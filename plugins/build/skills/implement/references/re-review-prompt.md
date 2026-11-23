@@ -15,4 +15,4 @@ of its own, graded Critical, Important or Minor as before. Do not review unrelat
 End with `Verdict: APPROVED` or `Verdict: CHANGES REQUESTED`, and list the findings still open.
 ```
 
-Write the fix diff with `git diff <before-fix-sha> HEAD > <workspace>/fix-<n>.diff` and pass the path.
+The fix diff is the output of `workspace.py package PLAN <pre-fix-sha> HEAD` (see `fix-loop.md`); pass its path.

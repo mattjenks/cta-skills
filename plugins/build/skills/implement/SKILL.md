@@ -42,38 +42,40 @@ Repeat for each task in order, never in parallel.
    tool. Stop and tell the owner if the account is near its usage cap. If context is past 40% or three tasks
    have run in this session, do the hand-off in section 4 instead of starting the task. With no usage tool
    available, treat context as unknown and hand off every 3 tasks.
-2. **Brief.** `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" brief PLAN TASK` writes the task brief;
+2. **Branch.** Before the builder commits anything, run `git branch --show-current` in the code repo. If it is
+   the default branch, stop and tell the owner; never build there.
+3. **Brief.** `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" brief PLAN TASK` writes the task brief;
    for a Small change write the brief by hand from the design (`brief` needs `### Task N:` headings, which a
-   design file lacks; `workspace` and `package` accept the design file as PLAN). Record `base` = current HEAD in the ledger.
-3. **Build.** Dispatch a builder subagent on the model the map in `references/models.md` names (haiku when
+   design file lacks; `workspace` and `package` accept the design file as PLAN). Record `base` = current HEAD in the ledger before the builder runs.
+4. **Build.** Dispatch a builder subagent on the model the map in `references/models.md` names (haiku when
    the plan gives exact code, sonnet by default) with `references/implementer-prompt.md`, passing the brief
    path, the repo path and the Global Constraints path. The builder writes tests first and sees them
    fail, implements, runs the suite, commits its task work locally (a conventional message, never pushed),
    and reports `DONE`, `DONE_WITH_CONCERNS`,
-   `NEEDS_CONTEXT` or `BLOCKED`. Answer `NEEDS_CONTEXT` from the design; escalate `BLOCKED` to the owner.
-4. **Review.** Once the builder has committed, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" package PLAN BASE HEAD` writes the
+   `NEEDS_CONTEXT` or `BLOCKED`. Right after its commit, record the ledger `head` (that commit's sha). Answer `NEEDS_CONTEXT` from the design; escalate `BLOCKED` to the owner.
+5. **Review.** Once the builder has committed, `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" package PLAN BASE HEAD` writes the
    review package (diff, brief, Review Focus). Dispatch a reviewer subagent on sonnet by default (map: `references/models.md`)
    with `references/reviewer-prompt.md`: one pass for spec and quality, with findings graded Critical,
    Important and Minor.
-5. **Fix loop.** Anything Critical or Important goes through `references/fix-loop.md`: up to 5 rounds, the
+6. **Fix loop.** Anything Critical or Important goes through `references/fix-loop.md`: up to 5 rounds, the
    re-review uses `references/re-review-prompt.md`, and rounds 4 and 5 move to a fresh, more capable model.
    A Critical finding from a sonnet reviewer sends its re-review to the most capable model
    (`references/fix-loop.md`, `references/models.md`).
    Still failing after round 5: mark the task `blocked` and stop for the owner with the open findings.
-6. **Validate.** Run `/build:validate`. A FAIL goes back to the builder as a fix round.
-7. **Dependency check.** Before the push, after the fix loop and validate (a fix can add one), read the
+7. **Validate.** Run `/build:validate`. A FAIL goes back to the builder as a fix round.
+8. **Dependency check.** Before the push, after the fix loop and validate (a fix can add one), read the
    whole task range `BASE..HEAD` (the builder's commit and every fix commit) for a new production dependency: any manifest or lockfile change
    (`pyproject.toml`, `package.json`, `requirements*.txt`, `go.mod`, `Cargo.toml`, `Gemfile` and similar)
    outside a dev group (development or build). **STOP before pushing:** present name, version, license and the reason, and
    wait for the owner. A dependency the approved plan already lists as verified is not new. Development and
    build dependencies do not count.
-8. **Push and ledger.** Push the code branch (the commits already exist: the builder's, then one per fix
+9. **Push and ledger.** Push the code branch (the commits already exist: the builder's, then one per fix
    round; nothing is rewritten). If the code repo is on its default branch, stop and tell the owner; never
    commit or push there. Then commit the ledger and any `reqs.md` change in the knowledge-base worktree
    (`docs(<slug>): progress after task <n>`) and push the build branch. Never push to the default branch,
    never touch the live knowledge-base checkout. A failed push: keep the commits, say so in the ledger and
    tell the owner; do not retry in a loop.
-9. Mark the task `done` in the ledger with the head sha.
+10. Mark the task `done` in the ledger with the head sha.
 
 ## 3. Finish
 

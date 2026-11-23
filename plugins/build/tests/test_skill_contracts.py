@@ -360,3 +360,30 @@ def test_implement_small_path_has_a_working_workspace_story():
     body = (SKILLS / "implement/SKILL.md").read_text()
     assert re.search(r"Small[^.]*brief[^.]*by hand", body, re.S)
     assert re.search(r"(workspace|package)[^.]*design file|design file[^.]*(workspace|package)", body, re.S)
+
+
+# --- fix round 3 ---
+
+
+def test_default_branch_check_precedes_builder_dispatch():
+    body = (SKILLS / "implement/SKILL.md").read_text()
+    build = body.index("**Build.**")
+    early = body[:build]
+    assert re.search(r"default branch[^.]*stop|stop[^.]*default branch", early, re.I | re.S)
+    assert re.search(r"git (-C \S+ )?(branch --show-current|rev-parse --abbrev-ref)", early)
+    assert re.search(r"default branch[^.]*stop|stop[^.]*default branch", body[body.index("**Push and ledger.**") :], re.I | re.S)
+
+
+def test_fix_diff_comes_from_the_commit_range_not_working_tree():
+    fix = (SKILLS / "implement/references/fix-loop.md").read_text()
+    assert re.search(r"pre-fix (sha|head)", fix, re.I)
+    assert re.search(r"workspace\.py\" package PLAN <pre-fix-sha> HEAD|package PLAN <pre-fix-sha> HEAD", fix)
+    assert not re.search(r"`git diff` the fix", fix)
+    rr = (SKILLS / "implement/references/re-review-prompt.md").read_text()
+    assert not re.search(r"git diff <before-fix-sha> HEAD", rr) or "package" in rr
+
+
+def test_ledger_head_recorded_right_after_builder_commit():
+    body = (SKILLS / "implement/SKILL.md").read_text()
+    build, review = _step_positions(body, "Build", "Review")
+    assert re.search(r"record[^.]*`?head`?[^.]*ledger|ledger[^.]*`?head`?", body[build:review], re.I | re.S)

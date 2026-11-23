@@ -13,10 +13,12 @@ only if the builder is touching that code anyway.
 ## Each round
 
 1. Write the open findings to `<workspace>/findings-<task>-<round>.md` (file, line, issue, smallest fix).
-2. Dispatch the fixer with `implementer-prompt.md`, passing the findings path in place of the brief and the
+2. Record the pre-fix sha (current HEAD) in the ledger, then dispatch the fixer with `implementer-prompt.md`, passing the findings path in place of the brief and the
    instruction: write the failing test for each finding first, then fix, and report as before.
-3. The fixer commits on top (never rewriting history); `git diff` the fix to `<workspace>/fix-<round>.diff`, record the round in the ledger.
-4. Dispatch the re-reviewer with `re-review-prompt.md`, passing both paths.
+3. The fixer commits on top (never rewriting history). Write the fix diff from the commit range, never a
+   working-tree `git diff` (it would be empty): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" 
+   package PLAN <pre-fix-sha> HEAD`. Record the round and the new head in the ledger.
+4. Dispatch the re-reviewer with `re-review-prompt.md`, passing the findings path and the fix diff path that step 3 printed.
 5. APPROVED: go on to validate. CHANGES REQUESTED: next round with the findings still open.
 
 ## Escalation
