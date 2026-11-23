@@ -64,7 +64,8 @@ The review never stops the build. After the last round:
 1. Rescan so the record matches the tree: `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/secure.py" scan
    --repo "$PWD" --base BASE --out <folder>/security.json`.
 2. Write `<folder>/pr-notes.md`: **Open findings** (every Critical or High still open, with file, line and
-   what the rounds tried; the owner decides each before merge) and **Known gaps** (the accepted gaps the
+   what the rounds tried; the owner decides each before merge; plus every ledger `open at PR` line copied
+   as is, an Important there counting as High, whatever the reviewer said of it) and **Known gaps** (the accepted gaps the
    review confirmed, one line each). Mediums and Lows not fixed are dropped, never filed for later.
 3. Push the code branch, record the verdict in the ledger, and say the branch is ready for `/build:pr`.
 

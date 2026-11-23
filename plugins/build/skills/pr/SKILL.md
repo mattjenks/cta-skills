@@ -36,7 +36,8 @@ finding as `false-positive` or `accepted-risk`, and the finding-guard hook block
 Never write `false-positive` or `accepted-risk` yourself, by any route.
 
 1. Build the PR body's **Open findings** from `<folder>/pr-notes.md` (from `/build:review`) plus every
-   `open` entry in `security.json`: `id`, severity, `path:line`, the message, what was tried.
+   entry `verify` named on exit 5 (an `open` status, an unknown status, or an owner closure missing
+   `closed_by`): `id`, severity, `path:line`, the message, what was tried or what is missing.
 2. List every `proposed-false-positive` entry there too, the whole batch at once, with your recorded
    reasoning and the exact edit the owner applies to `<folder>/security.json` themselves before merging:
    per `id`, set `status`, `reason` (their words) and `closed_by` (their name). Say the hook blocks the
