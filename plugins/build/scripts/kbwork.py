@@ -9,10 +9,18 @@ base, on its own branch, so the live checkout is never touched. Writing the
 active-build pointer also installs the commit gate (gitgate.install_gate); clearing
 it removes the gate unless the repo tracks `.cta/security.toml`. Stdlib only.
 
+Worktree scoping (the user works in git worktrees, so each choice is deliberate):
+  - `[projects]` lookup and `record_project` are per-repo: keyed by the main checkout
+    (main_checkout), so every worktree of a repo shares one slug.
+  - The active-build pointer (`.cta/active-build`) is per-worktree: each worktree runs its own
+    build, and the file lives in that worktree's directory.
+  - The commit gate (`core.hooksPath` in the common git config) is per-repo, since git shares it
+    across worktrees; clear_pointer keeps it while any other worktree still has a pointer.
+
 CLI (prints JSON):
   kbwork.py open --kb PATH --slug S --topic T [--projects-dir D] [--date YYYY-MM-DD]
                  [--root DIR] [--repo PATH]
-  kbwork.py project --repo PATH [--slug S] [--config PATH]   (resolve, or record with --slug)
+  kbwork.py project --repo PATH [--slug S] [--config PATH]   (resolve, or record with --slug; a worktree maps to its main checkout)
   kbwork.py pointer --repo PATH
   kbwork.py close --repo PATH
   kbwork.py clear --repo PATH  (drop the pointer; the gate too unless opted in or another worktree builds)
@@ -121,6 +129,18 @@ def _parses(text: str) -> bool:
         return False
 
 
+def main_checkout(repo: Path) -> Path:
+    """The main checkout a `[projects]` entry is keyed by: for a linked git worktree, the parent
+    of the common `.git`; otherwise (plain repo, bare repo, not a repo) the resolved path itself."""
+    here = Path(repo).expanduser().resolve()
+    if not here.is_dir():
+        return here
+    common = _out(here, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if common and Path(common).name == ".git":
+        return Path(common).resolve().parent
+    return here
+
+
 def record_project(config_path: Path, repo: Path, slug: str) -> None:
     """Add `"<resolved repo>" = "<slug>"` under [projects] without touching other lines.
 
@@ -128,7 +148,7 @@ def record_project(config_path: Path, repo: Path, slug: str) -> None:
     its `projects` entry is not a plain `[projects]` table.
     """
     _check_slug(slug, "slug")
-    repo_key = str(Path(repo).expanduser().resolve())
+    repo_key = str(main_checkout(repo))
     entry = f"{_toml_str(repo_key)} = {_toml_str(slug)}"
     path = Path(os.path.realpath(Path(config_path).expanduser()))
 
@@ -443,12 +463,13 @@ def project_info(repo: Path, config: Path | None = None, slug: str | None = None
     projects_dir = data.get("projects_dir")
     if not isinstance(projects_dir, str) or not projects_dir:
         projects_dir = "projects"
-    mapped = (data.get("projects") or {}).get(str(Path(repo).expanduser().resolve()))
+    main = main_checkout(repo)
+    mapped = (data.get("projects") or {}).get(str(main))
     return {
         "kb": str(Path(kb).expanduser()),
         "projects_dir": projects_dir,
         "slug": mapped if isinstance(mapped, str) else None,
-        "repo": str(Path(repo).expanduser().resolve()),
+        "repo": str(main),
     }
 
 
