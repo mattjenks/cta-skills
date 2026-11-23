@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: final-review-triage
+expected_outcome: |
+  Opus final review with deferred minors triaged, check_skill run, one fix wave, one sonnet re-review.

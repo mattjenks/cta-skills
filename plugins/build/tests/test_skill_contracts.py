@@ -22,13 +22,13 @@ def has(skill: str, *patterns: str) -> None:
         assert re.search(pattern, body, re.I | re.S), f"{skill}: missing /{pattern}/"
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate"])
+@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate", "secure", "review"])
 def test_skill_exists_with_matching_name(skill):
     head = (SKILLS / skill / "SKILL.md").read_text().split("---")[1]
     assert re.search(rf"^name: {skill}$", head, re.M)
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate"])
+@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate", "secure", "review"])
 def test_no_fable_and_no_persona(skill):
     body = text(skill).replace((SKILLS / "implement/references/models.md").read_text(), "")
     assert not re.search(r"\bfable\b", body, re.I)
@@ -144,7 +144,7 @@ def undeclared_dispatches(body: str) -> list[str]:
     return bad
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate"])
+@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate", "secure", "review"])
 def test_every_dispatch_names_its_model_and_links_models_md(skill):
     assert undeclared_dispatches((SKILLS / skill / "SKILL.md").read_text()) == []
 
@@ -387,3 +387,62 @@ def test_ledger_head_recorded_right_after_builder_commit():
     body = (SKILLS / "implement/SKILL.md").read_text()
     build, review = _step_positions(body, "Build", "Review")
     assert re.search(r"record[^.]*`?head`?[^.]*ledger|ledger[^.]*`?head`?", body[build:review], re.I | re.S)
+
+
+# --- secure and review (task 8) ---
+
+CHECK_SKILL = SKILLS.parent.parent / "core/skills/create-skill/scripts/check_skill.py"
+
+
+def test_secure_scan_stop_and_status_rules():
+    has(
+        "secure",
+        r"full_scan|secure\.py scan",
+        r"checklist\.md",
+        r"opus.{0,80}models\.md",
+        r"injection", r"authn|authentication", r"secrets", r"deserializ", r"path traversal", r"SSRF",
+        r"unsafe shell", r"crypto", r"prompt injection",
+        r"failing test", r"diff_hash",
+        r"STOP[^.]*install|install[^.]*STOP",
+        r"never skip",
+        r"proposed-false-positive",
+        r"false-positive[^.]*accepted-risk|accepted-risk[^.]*false-positive",
+        r"network",
+        r"p/default",
+    )
+
+
+def test_secure_never_writes_owner_only_statuses():
+    has("secure", r"never write[^.]*(false-positive|accepted-risk)|owner[^.]*(false-positive|accepted-risk)")
+
+
+def test_secure_credits_sources():
+    assert "Adapted from obra/superpowers" in text("secure")
+    assert "Adapted from coleam00/skills" in text("secure")
+
+
+def test_review_final_review_shape():
+    has(
+        "review",
+        r"final-review\.md",
+        r"opus.{0,80}models\.md",
+        r"minor \(deferred\)",
+        r"triage",
+        r"one fix wave",
+        r"one scoped re-review|scoped re-review",
+        r"sonnet",
+        r"Critical",
+        r"check_skill\.py",
+        r"evals",
+        r"budget",
+    )
+    assert (SKILLS / "review/references/final-review.md").is_file()
+
+
+def test_review_credits_sources():
+    assert "Adapted from obra/superpowers" in text("review")
+    assert "Adapted from coleam00/skills" in text("review")
+
+
+def test_secure_and_review_stay_in_their_lane():
+    assert not re.search(r"\bfable\b", text("secure") + text("review"), re.I)
