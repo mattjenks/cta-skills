@@ -265,10 +265,10 @@ def _unify_newlines(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _is_prose_path(tool_input: dict) -> bool:
-    return any(
-        str(tool_input.get(k) or "").lower().endswith(PROSE_SUFFIXES)
-        for k in ("file_path", "notebook_path")
+def _is_prose_path(tool_name: str, tool_input: dict) -> bool:
+    # Notebook cells are code, and only `file_path` names what is written.
+    return tool_name != "NotebookEdit" and str(tool_input.get("file_path") or "").lower().endswith(
+        PROSE_SUFFIXES
     )
 
 
@@ -328,7 +328,7 @@ def _check(tool_name: str, tool_input: dict, deadline: float) -> str | None:
         texts = [t for t in _contents(tool_name, tool_input) if isinstance(t, str)]
         if sum(len(t) for t in texts) > MAX_CONTENT:
             return BLOCKED_COMPLEX
-        prose = _is_prose_path(tool_input)
+        prose = _is_prose_path(tool_name, tool_input)
         for text in texts:
             reason = _inspect_content(text, deadline, prose)
             if reason:

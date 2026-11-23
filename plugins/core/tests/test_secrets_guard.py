@@ -162,6 +162,9 @@ ROWS = [
     ("Write", {"file_path": "notes.md", "content": "intro\nsudo " + _COMPGEN_E + "\n"}, True),
     ("Write", {"file_path": "notes.txt", "content": "- add " + _TICK + _DECLARE_X + _TICK + " row"}, False),
     ("Write", {"file_path": "NOTES.MD", "content": "- add " + _TICK + _DECLARE_X + _TICK + " row"}, False),
+    # --- prose route keys off file_path of non-notebook tools only ---
+    ("Write", {"file_path": "x.sh", "notebook_path": "x.md", "content": "echo " + _TICK + _EXPORT_P + _TICK}, True),
+    ("NotebookEdit", {"notebook_path": "x.md", "new_source": "echo " + _TICK + _EXPORT_P + _TICK}, True),
 ]
 
 
