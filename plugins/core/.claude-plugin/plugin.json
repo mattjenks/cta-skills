@@ -1,7 +1,7 @@
 {
   "name": "core",
   "displayName": "CTA Core",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Chief Technology Assistant: a prescriptive, Claude Code-specific system of skills and hooks for the plan, build, deploy, monitor, learn loop.",
   "author": {
     "name": "Matt Jenks",
