@@ -5,7 +5,7 @@
     "cta"
   ],
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": false,
   "time": {
     "from": "now-7d",
@@ -446,6 +446,92 @@
             "stacking": {
               "mode": "normal"
             }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Builds per week",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "sum by (size) (count_over_time({service_name=~\".+\"} | event_name=\"cta.build\" [1w]))",
+          "legendFormat": "{{size}}",
+          "refId": "A",
+          "queryType": "range",
+          "step": "1d"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 12,
+      "title": "Fix rounds per build",
+      "type": "timeseries",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "avg(avg_over_time({service_name=~\".+\"} | event_name=\"cta.build\" | unwrap fix_rounds [1w]))",
+          "legendFormat": "avg",
+          "refId": "A",
+          "queryType": "range",
+          "step": "1d"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "max(max_over_time({service_name=~\".+\"} | event_name=\"cta.build\" | unwrap fix_rounds [1w]))",
+          "legendFormat": "max",
+          "refId": "B",
+          "queryType": "range",
+          "step": "1d"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 52,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
           }
         },
         "overrides": []
