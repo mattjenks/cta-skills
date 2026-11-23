@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: templates-and-config-key
+expected_outcome: |
+  Names the template documents and the kb config key, and runs git init.
