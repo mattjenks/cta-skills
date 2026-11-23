@@ -480,3 +480,50 @@ def test_clear_cli_removes_pointer_and_gate(tmp_path, kb, capsys):
     assert kbwork.main(["clear", "--repo", str(repo)]) == 0
     assert json.loads(capsys.readouterr().out) == {"cleared": True}
     assert kbwork.read_pointer(repo) is None and not gitgate.gate_installed(repo)
+
+
+# --- git worktrees resolve to the main checkout -------------------------------
+
+
+def _worktree(tmp_path):
+    main = make_repo(tmp_path / "main-repo")
+    wt = tmp_path / "linked-wt"
+    git(main, "worktree", "add", "-q", "-b", "feature", str(wt))
+    return main, wt
+
+
+def test_main_checkout_resolves_worktree_and_plain_repo(tmp_path):
+    main, wt = _worktree(tmp_path)
+    assert kbwork.main_checkout(wt) == main.resolve()
+    assert kbwork.main_checkout(main) == main.resolve()
+    sub = wt / "sub"
+    sub.mkdir()
+    assert kbwork.main_checkout(sub) == main.resolve()
+
+
+def test_main_checkout_non_repo_falls_back_to_path(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert kbwork.main_checkout(plain) == plain.resolve()
+
+
+def test_project_info_from_worktree_finds_mapped_slug(tmp_path):
+    main, wt = _worktree(tmp_path)
+    cfg = _cfg(tmp_path, f'kb = "{tmp_path}"\n[projects]\n"{main.resolve()}" = "cta"\n')
+    info = kbwork.project_info(wt, cfg)
+    assert info["slug"] == "cta"
+    assert info["repo"] == str(main.resolve())
+
+
+def test_project_cli_from_worktree(tmp_path, capsys):
+    main, wt = _worktree(tmp_path)
+    cfg = _cfg(tmp_path, f'kb = "{tmp_path}"\n[projects]\n"{main.resolve()}" = "cta"\n')
+    assert kbwork.main(["project", "--repo", str(wt), "--config", str(cfg)]) == 0
+    assert json.loads(capsys.readouterr().out)["slug"] == "cta"
+
+
+def test_record_project_from_worktree_keys_main_checkout(tmp_path):
+    main, wt = _worktree(tmp_path)
+    cfg = _cfg(tmp_path, f'kb = "{tmp_path}"\n')
+    kbwork.record_project(cfg, wt, "cta")
+    assert tomllib.loads(cfg.read_text())["projects"] == {str(main.resolve()): "cta"}
