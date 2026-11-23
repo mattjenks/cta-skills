@@ -363,4 +363,4 @@ def test_content_deadline_fails_closed(monkeypatch):
 def test_builtin_opener_pattern_is_linear():
     for filler in ("-a ", "A=1 ", "-c ", "sudo ", " \t"):
         content = filler * 50_000 + "x"
-        assert _timed_check("Write", {"file_path": "x.sh", "content": content}) is None
+        assert _timed_check("Write", {"file_path": "notes.md", "content": content}) is None
