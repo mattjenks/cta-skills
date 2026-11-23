@@ -344,7 +344,7 @@ def test_git_add_inside_message_substitution_is_scanned(gated, env):
 def test_info_findings_listed_not_blocking(gated, env, bins):
     _exe(bins["fake"] / "semgrep", '#!/bin/sh\necho \'{"results": [{"check_id": "r.note", "path": "a.py", '
          '"start": {"line": 2}, "extra": {"severity": "INFO", "message": "fyi"}}], "errors": []}\'\n')
-    (gated / "a.py").write_text("x = 1\n")
+    (gated / "a.py").write_text("x = 1\ny = 2\n")
     git(gated, env, "add", "a.py")
     result = git(gated, env, "commit", "-q", "-m", "x", check=False)
     assert result.returncode == 0
@@ -661,7 +661,9 @@ def test_check_default_scan_uses_deadline_and_index(staged, monkeypatch):
     assert 30 <= gitgate.GATE_DEADLINE <= 300
 
 
-def test_check_findings_capped_at_ten(staged):
+def test_check_findings_capped_at_ten(staged, env):
+    (staged / "a.py").write_text("".join(f"x{i} = {i}\n" for i in range(14)))
+    git(staged, env, "add", "a.py")
     found = [Finding.create("semgrep", f"r.{i}", "a.py", i, "medium", "m") for i in range(14)]
     code, text = gitgate.check(staged, None, lambda t, i: found, ALL)
     assert code == 1 and text.count("[medium]") == 10 and "and 4 more" in text
@@ -750,3 +752,62 @@ def test_fast_scan_without_timeout_adds_none(tmp_path, env):
     with pytest.raises(subprocess.CalledProcessError):
         scan.fast_scan(repo, run=run_)
     assert "timeout" not in seen[0]
+
+
+# ---- only the lines the commit changes are judged --------------------------------------------
+
+def _committed(tmp_path, env, files: dict) -> Path:
+    """A gated repo whose HEAD already holds `files` (committed before the gate existed)."""
+    repo = make_repo(tmp_path / "repo", env, gated=True)
+    for name, text in files.items():
+        (repo / name).write_text(text)
+    git(repo, env, "add", ".")
+    git(repo, env, "commit", "-q", "-m", "before the gate")
+    return repo
+
+
+def test_changed_lines_new_modified_and_deleted(tmp_path, env):
+    repo = _committed(tmp_path, env, {"m.py": "a\nb\nc\nd\n", "d.py": "a\nb\nc\n"})
+    (repo / "n.py").write_text("1\n2\n3\n")
+    (repo / "m.py").write_text("a\nB\nc\nd\ne\n")  # line 2 edited, line 5 added
+    (repo / "d.py").write_text("a\nc\n")  # a deletion only
+    git(repo, env, "add", ".")
+    changed = gitgate.changed_lines(repo, None)
+    assert changed["n.py"] == {1, 2, 3}
+    assert changed["m.py"] == {2, 5}
+    assert changed["d.py"] == set()
+
+
+def test_check_ignores_findings_on_unchanged_lines(tmp_path, env):
+    repo = _committed(tmp_path, env, {"m.py": "a\nb\nc\n"})
+    (repo / "m.py").write_text("a\nb\nC\n")
+    git(repo, env, "add", "m.py")
+    old = [Finding.create("semgrep", "r.old", "m.py", 1, "high", "m")]
+    code, text = gitgate.check(repo, None, lambda t, i: old, ALL)
+    assert code == 0
+    assert "1 finding(s) on unchanged lines" in text and "[high]" not in text
+    new = old + [Finding.create("semgrep", "r.new", "m.py", 3, "high", "m")]
+    code, text = gitgate.check(repo, None, lambda t, i: new, ALL)
+    assert code == 1 and "r.new" in text and "r.old" not in text
+
+
+def test_check_keeps_file_level_and_unmapped_findings(tmp_path, env):
+    repo = _committed(tmp_path, env, {"m.py": "a\nb\n"})
+    (repo / "m.py").write_text("a\nB\n")
+    git(repo, env, "add", "m.py")
+    file_level = [Finding.create("semgrep", "semgrep.skipped-target", "m.py", 0, "high", "m")]
+    assert gitgate.check(repo, None, lambda t, i: file_level, ALL)[0] == 1
+    # a path the diff does not map (e.g. a binary file) is judged whole: fail closed
+    unmapped = [Finding.create("gitleaks", "r", "other.bin", 7, "high", "m")]
+    assert gitgate.check(repo, None, lambda t, i: unmapped, ALL)[0] == 1
+
+
+def test_edit_away_from_preexisting_finding_commits(tmp_path, bins):
+    env = make_env(bins)
+    repo = _committed(tmp_path, env, {"old.py": f"y = '{MARK}'\nz = 2\n"})
+    gitgate.install_gate(repo)
+    (repo / "old.py").write_text(f"y = '{MARK}'\nz = 3\n")  # the fake semgrep reports line 1
+    git(repo, env, "add", "old.py")
+    result = git(repo, env, "commit", "-q", "-m", "x", check=False)
+    assert result.returncode == 0, result.stderr
+    assert "on unchanged lines" in result.stderr
