@@ -136,3 +136,60 @@ def test_corrupt_record_exits_2_with_message(repo, tmp_path, capsys):
     assert rc == 2
     assert "not valid JSON" in capsys.readouterr().err
     assert out.read_text() == "{not json"
+
+
+# --- verify (what `pr` checks before it opens anything) ---
+
+
+def verify(repo, out):
+    return secure.main(["verify", "--repo", str(repo), "--base", "main", "--file", str(out)])
+
+
+def test_verify_clean_record_passes(repo, tmp_path, capsys):
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [])
+    assert verify(repo, out) == 0
+
+
+def test_verify_stale_after_new_commit(repo, tmp_path, capsys):
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [])
+    (repo / "a.py").write_text("x = 9\n")
+    git(repo, "commit", "-qam", "later")
+    assert verify(repo, out) == 4
+    assert "diff_hash" in capsys.readouterr().err
+
+
+def test_verify_missing_file_is_stale(repo, tmp_path):
+    assert verify(repo, tmp_path / "none.json") == 4
+
+
+def test_verify_open_finding_blocks(repo, tmp_path, capsys):
+    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [f])
+    assert verify(repo, out) == 5
+    assert f.id in capsys.readouterr().err
+
+
+def test_verify_lists_proposed_and_exits_6(repo, tmp_path, capsys):
+    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [f])
+    set_status(out, "proposed-false-positive")
+    assert verify(repo, out) == 6
+    assert json.loads(capsys.readouterr().out)["proposed"][0]["id"] == f.id
+
+
+@pytest.mark.parametrize("status", ["false-positive", "accepted-risk"])
+def test_verify_owner_closure_passes_only_with_closed_by(repo, tmp_path, status):
+    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [f])
+    rec = json.loads(out.read_text())
+    rec["findings"][0].update(status=status, reason="why", closed_by=None)
+    out.write_text(json.dumps(rec))
+    assert verify(repo, out) == 5
+    rec["findings"][0]["closed_by"] = "matt"
+    out.write_text(json.dumps(rec))
+    assert verify(repo, out) == 0

@@ -15,6 +15,8 @@ CLI (prints JSON):
   kbwork.py project --repo PATH [--slug S] [--config PATH]   (resolve, or record with --slug)
   kbwork.py pointer --repo PATH
   kbwork.py close --repo PATH
+  kbwork.py clear --repo PATH  (drop the pointer; the gate too unless opted in or another worktree builds)
+  kbwork.py gate --repo PATH   (reinstall the commit gate when a build is active and it is missing or stale)
 """
 
 from __future__ import annotations
@@ -381,17 +383,45 @@ def read_pointer(repo: Path) -> Build | None:
         return None
 
 
+def _other_worktree_builds(repo: Path) -> bool:
+    """Another linked worktree of this repo still has an active-build pointer."""
+    here = Path(repo).resolve()
+    out = _out(here, "worktree", "list", "--porcelain")
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            other = Path(line[len("worktree "):])
+            try:
+                same = other.resolve() == here
+            except OSError:
+                continue
+            if not same and (other / POINTER).exists():
+                return True
+    return False
+
+
 def clear_pointer(repo: Path) -> None:
     """Remove the pointer and the commit gate, unless the repo opted in to a permanent gate
-    with a tracked `.cta/security.toml`."""
+    with a tracked `.cta/security.toml` or another worktree of it is still mid-build (the
+    gate is shared through the common git config)."""
     (Path(repo) / POINTER).unlink(missing_ok=True)
     import gitgate
 
-    if not gitgate.opted_in(repo):
+    if not gitgate.opted_in(repo) and not _other_worktree_builds(repo):
         try:
             gitgate.uninstall_gate(repo)
         except gitgate.GateError as exc:  # the gate stays on: the safe side
             print(f"warning: commit gate not removed from {repo}: {exc}", file=sys.stderr)
+
+
+def ensure_gate(repo: Path) -> bool:
+    """With an active build, (re)install the commit gate when it is missing or its hooksPath is
+    stale (the plugin moved on an update). True when it had to be repaired."""
+    import gitgate
+
+    if read_pointer(repo) is None or gitgate.gate_installed(repo):
+        return False
+    gitgate.install_gate(repo)
+    return True
 
 
 def project_info(repo: Path, config: Path | None = None, slug: str | None = None) -> dict:
@@ -451,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
     pj.add_argument("--repo", required=True, type=Path)
     pj.add_argument("--slug", default=None)
     pj.add_argument("--config", type=Path, default=None)
-    for name in ("pointer", "close"):
+    for name in ("pointer", "close", "gate", "clear"):
         sp = sub.add_parser(name)
         sp.add_argument("--repo", required=True, type=Path)
     args = ap.parse_args(argv)
@@ -467,6 +497,11 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(_as_json(build)))
         elif args.cmd == "project":
             print(json.dumps(project_info(args.repo, args.config, args.slug)))
+        elif args.cmd == "clear":
+            clear_pointer(args.repo)
+            print(json.dumps({"cleared": True}))
+        elif args.cmd == "gate":
+            print(json.dumps({"gate": "reinstalled" if ensure_gate(args.repo) else "ok"}))
         elif args.cmd == "pointer":
             build = read_pointer(args.repo)
             print(json.dumps(_as_json(build) if build else None))

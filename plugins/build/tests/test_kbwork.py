@@ -422,3 +422,61 @@ def test_project_cli_records_then_resolves(tmp_path, capsys):
 def test_project_cli_rejects_bad_slug(tmp_path, capsys):
     code, out, _, _ = run_project(tmp_path, capsys, "--slug", "Bad Slug", config_text=f'kb = "{tmp_path}"\n')
     assert code == 1 and "slug" in out["error"]
+
+
+def test_clear_pointer_keeps_gate_while_another_worktree_has_a_build(tmp_path, kb):
+    import gitgate
+
+    repo = make_repo(tmp_path / "repo")
+    other = tmp_path / "other"
+    git(repo, "worktree", "add", "-q", "-b", "side", str(other))
+    b1 = kbwork.open_build(kb, "projects", "app", "login", TODAY, tmp_path / "wt")
+    b2 = kbwork.open_build(kb, "projects", "app", "logout", TODAY, tmp_path / "wt")
+    kbwork.write_pointer(repo, b1)
+    kbwork.write_pointer(other, b2)
+    kbwork.clear_pointer(repo)
+    assert gitgate.gate_installed(repo)  # the other worktree is still mid-build
+    kbwork.clear_pointer(other)
+    assert not gitgate.gate_installed(repo)
+    assert _hooks_path(repo) is None
+
+
+def test_ensure_gate_repairs_a_stale_hooks_path(tmp_path, kb):
+    import gitgate
+
+    repo = make_repo(tmp_path / "repo")
+    b = kbwork.open_build(kb, "projects", "app", "login", TODAY, tmp_path / "wt")
+    kbwork.write_pointer(repo, b)
+    git(repo, "config", "--local", "core.hooksPath", "/old/plugin/version/hooks/git")
+    assert not gitgate.gate_installed(repo)
+    assert kbwork.ensure_gate(repo) is True
+    assert gitgate.gate_installed(repo)
+    assert kbwork.ensure_gate(repo) is False  # already fine
+
+
+def test_ensure_gate_does_nothing_without_a_pointer(tmp_path):
+    import gitgate
+
+    repo = make_repo(tmp_path / "repo")
+    assert kbwork.ensure_gate(repo) is False
+    assert not gitgate.gate_installed(repo)
+
+
+def test_gate_cli_reports_repair(tmp_path, kb, capsys):
+    repo = make_repo(tmp_path / "repo")
+    b = kbwork.open_build(kb, "projects", "app", "login", TODAY, tmp_path / "wt")
+    kbwork.write_pointer(repo, b)
+    git(repo, "config", "--local", "core.hooksPath", "/old")
+    assert kbwork.main(["gate", "--repo", str(repo)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"gate": "reinstalled"}
+
+
+def test_clear_cli_removes_pointer_and_gate(tmp_path, kb, capsys):
+    import gitgate
+
+    repo = make_repo(tmp_path / "repo")
+    b = kbwork.open_build(kb, "projects", "app", "login", TODAY, tmp_path / "wt")
+    kbwork.write_pointer(repo, b)
+    assert kbwork.main(["clear", "--repo", str(repo)]) == 0
+    assert json.loads(capsys.readouterr().out) == {"cleared": True}
+    assert kbwork.read_pointer(repo) is None and not gitgate.gate_installed(repo)

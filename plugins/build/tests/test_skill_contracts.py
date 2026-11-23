@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 SKILLS = Path(__file__).resolve().parent.parent / "skills"
+ALL_SKILLS = ["prime", "design", "plan", "implement", "validate", "secure", "review",
+              "commit", "pr", "review-pr", "retro", "debug", "fix-issue", "loop"]
 
 
 def text(skill: str) -> str:
@@ -22,13 +24,13 @@ def has(skill: str, *patterns: str) -> None:
         assert re.search(pattern, body, re.I | re.S), f"{skill}: missing /{pattern}/"
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate", "secure", "review"])
+@pytest.mark.parametrize("skill", ALL_SKILLS)
 def test_skill_exists_with_matching_name(skill):
     head = (SKILLS / skill / "SKILL.md").read_text().split("---")[1]
     assert re.search(rf"^name: {skill}$", head, re.M)
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate", "secure", "review"])
+@pytest.mark.parametrize("skill", ALL_SKILLS)
 def test_no_fable_and_no_persona(skill):
     body = text(skill).replace((SKILLS / "implement/references/models.md").read_text(), "")
     assert not re.search(r"\bfable\b", body, re.I)
@@ -144,7 +146,7 @@ def undeclared_dispatches(body: str) -> list[str]:
     return bad
 
 
-@pytest.mark.parametrize("skill", ["prime", "design", "plan", "implement", "validate", "secure", "review"])
+@pytest.mark.parametrize("skill", ALL_SKILLS)
 def test_every_dispatch_names_its_model_and_links_models_md(skill):
     assert undeclared_dispatches((SKILLS / skill / "SKILL.md").read_text()) == []
 
@@ -466,3 +468,109 @@ def test_review_locates_core_check_skill_and_reports_when_missing():
     assert re.search(r"CLAUDE_PLUGIN_ROOT\}/\.\./core/skills/create-skill/scripts/check_skill\.py", body)
     assert re.search(r"CLAUDE_PLUGIN_ROOT\}/\.\./\.\./core/\*/skills/create-skill/scripts/check_skill\.py", body)
     assert re.search(r"missing[^.]*(finding)[^.]*never skip|never skip[^.]*silently", body, re.I | re.S)
+
+
+# --- commit, pr, review-pr, retro, debug, fix-issue, loop ---
+
+
+def test_commit_is_one_conventional_commit():
+    has("commit", r"conventional", r"one commit|a single commit", r"never (amend|rewrite)|do not amend",
+        r"never push|does not push|do not push", r"git diff --staged|git diff --cached|staged")
+
+
+def test_pr_verifies_security_json_with_the_script():
+    has("pr", r"secure\.py\" verify|secure\.py verify", r"diff_hash", r"open")
+
+
+def test_pr_stops_once_with_the_whole_proposed_batch_and_never_writes_closures():
+    has(
+        "pr",
+        r"proposed-false-positive",
+        r"STOP",
+        r"once",
+        r"every|all|whole batch",
+        r"verbatim",
+        r"closed_by",
+        r"never write `?false-positive`?|never write [^.]*accepted-risk",
+        r"closures\.md",
+        r"apply[\s\S]{0,80}themselves|owner applies|owner makes",
+        r"re-?verif|verify again|run `?verify`? again",
+    )
+
+
+def test_pr_pushes_and_opens_two_linked_prs_then_clears_pointer_last():
+    body = text("pr")
+    has("pr", r"gh pr create", r"knowledge-base", r"each (PR )?link", r"clear_pointer|kbwork\.py close|clear the pointer")
+    assert body.lower().rfind("clear") > body.find("gh pr create")
+    has("pr", r"no remote", r"skip", r"never push to (the )?(default|main)", r"merges? (are|is) (the owner|Matt)'?s|never merge")
+
+
+def test_pr_clear_pointer_is_last_step():
+    last = (SKILLS / "pr/SKILL.md").read_text().split("\n## ")[-1]
+    assert re.search(r"pointer", last.splitlines()[0], re.I) and "clear" in last
+
+
+def test_review_pr_drafts_then_posts_after_confirmation():
+    has("review-pr", r"gh pr (view|diff)", r"draft", r"confirm", r"gh pr review|gh api", r"sonnet",
+        r"\.\./implement/references/models\.md")
+
+
+def test_retro_contents_rating_and_event():
+    has(
+        "retro",
+        r"retro\.md",
+        r"plan vs\.? actual|plan against actual",
+        r"corrections",
+        r"slow",
+        r"severity",
+        r"categor",
+        r"fix rounds",
+        r"gates",
+        r"1\s*(to|-|\u2013)\s*5",
+        r"retro_event\.py",
+        r"--file",
+        r"exit 1|unreachable",
+        r"not\s+block|never\s+block",
+    )
+
+
+def test_retro_rating_optional_and_data_is_fixed_fields():
+    has("retro", r"declin", r"empty", r"findings_critical", r"findings_important", r"findings_minor", r"fix_rounds")
+
+
+def test_debug_root_cause_before_fix():
+    has("debug", r"root cause", r"before (any|a) fix|no fix until|never (propose|attempt)", r"hypothes",
+        r"failing test", r"sonnet", r"\.\./implement/references/models\.md")
+
+
+def test_debug_credits_superpowers():
+    assert "Adapted from obra/superpowers skills/systematic-debugging" in (SKILLS / "debug/SKILL.md").read_text()
+
+
+def test_fix_issue_chain():
+    has("fix-issue", r"gh issue view", r"/build:debug", r"/build:loop|the loop", r"small", r"normal",
+        r"5 files or fewer")
+
+
+def test_loop_chain_and_announcements():
+    body = text("loop")
+    body = body[body.index("## 1. The chain"):]
+    found = [re.search(rf"/build:{s}\b", body) for s in ("prime", "design", "plan", "implement", "validate", "secure", "review", "pr", "retro")]
+    assert all(found), found
+    order = [m.start() for m in found]
+    assert order == sorted(order)
+    has("loop", r"announce", r"Small: plan review skipped", r"skip[^.]*plan", r"never ask[^.]*execution|never asks[^.]*execution")
+
+
+def test_loop_gate_carry_and_kb_without_git():
+    has("loop", r"kbwork\.py\" gate|kbwork\.py gate|ensure_gate|gate_installed", r"stale|missing", r"/core:init-kb", r"git")
+
+
+def test_loop_does_not_duplicate_procedures():
+    assert len((SKILLS / "loop/SKILL.md").read_text().splitlines()) < 110
+
+
+@pytest.mark.parametrize("skill", ["commit", "pr", "review-pr", "retro", "debug", "fix-issue", "loop"])
+def test_new_skills_say_what_and_when(skill):
+    head = (SKILLS / skill / "SKILL.md").read_text().split("---")[1]
+    assert re.search(r"^description: .*(Use (when|after|to|at)|when asked)", head, re.M | re.I)
