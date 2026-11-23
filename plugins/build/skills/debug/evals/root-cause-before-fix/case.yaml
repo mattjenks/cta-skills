@@ -1,4 +1,4 @@
 schema_version: "1.1"
 name: root-cause-before-fix
 expected_outcome: |
-  No fix before the cause.
+  debug: reproduce, evidence, one hypothesis, root cause, then failing test, then fix.

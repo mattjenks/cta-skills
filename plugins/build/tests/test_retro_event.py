@@ -95,3 +95,28 @@ def test_bad_file_exits_2(tmp_path):
     f = tmp_path / "retro.json"
     f.write_text("not json")
     assert retro_event.main(["--file", str(f)]) == 2
+
+
+@pytest.mark.parametrize("status", [400, 500])
+def test_http_error_is_rejected_not_unreachable(tmp_path, capsys, status):
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.send_response(status)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    t = threading.Thread(target=srv.handle_request)
+    t.start()
+    f = tmp_path / "retro.json"
+    f.write_text(json.dumps(FIELDS))
+    rc = retro_event.main(["--file", str(f), "--endpoint", f"http://127.0.0.1:{srv.server_port}/v1/logs"])
+    t.join(5)
+    srv.server_close()
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert f"collector rejected the event: HTTP {status}" in err
+    assert "unreachable" not in err

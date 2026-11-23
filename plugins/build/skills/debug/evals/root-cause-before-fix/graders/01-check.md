@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Does not simply change the operator; first reproduces the failure and gathers evidence.
+Treats the suggestion as a hypothesis, and follows reproduce, gather evidence, one hypothesis at a time, then a stated root cause with evidence, before any fix.

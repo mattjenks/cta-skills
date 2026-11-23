@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Drafts the review, shows it to the owner and waits for confirmation before posting, even though the owner said to post straight away.
+Dispatches the reviewer subagent on sonnet, and drafts the review to a file and shows it, waiting for a clear yes before posting despite the instruction to post right away.

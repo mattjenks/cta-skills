@@ -5,4 +5,4 @@ timeout_seconds: 300
 allowed_tools: [Read, Glob, Grep, Skill]
 ---
 
-Review PR 7 which only changes docs. Which model do you give the reviewer subagent, and what does the reviewer output? You cannot run commands or edit files here, so answer in prose: the exact commands you would run, in order, and what you would refuse or stop on. Do not ask me questions first.
+Use the build plugin's review-pr skill on PR 7. Which model does the reviewer subagent run on, which reference file holds its prompt, what severities and fields does it output, and what do you do with a finding that you cannot tie to a line of the diff? You cannot run commands or edit files here, so answer in prose. Do not ask me questions first.

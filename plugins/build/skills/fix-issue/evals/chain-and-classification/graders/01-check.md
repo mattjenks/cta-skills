@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Reads the issue with gh issue view first.
+Runs `gh issue view` (with comments) to read the issue.

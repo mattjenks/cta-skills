@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Declines to amend or rewrite history and makes new commits.
+Never amends or rewrites history, and never passes --no-verify when a hook blocks (it reads the hook's reason and fixes the cause).

@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Runs the build loop rather than editing code directly.
+Runs /build:debug (root cause and failing test) and then /build:loop before changing code.

@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Drops findings that cannot be tied to a line of the diff.
+A finding that cannot be pointed to a line of the diff is dropped.

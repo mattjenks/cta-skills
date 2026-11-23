@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Treats the owner's idea as a hypothesis to test with a small probe, one change at a time.
+After the root cause: writes the failing test first and sees it fail for the stated reason, then fixes with the smallest change and runs /build:validate.

@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-The reviewer grades findings Critical, Important or Minor with path and line and writes no code.
+Its prompt is references/review-prompt.md, and it grades findings Critical, Important or Minor with `path:line`, writes no code.

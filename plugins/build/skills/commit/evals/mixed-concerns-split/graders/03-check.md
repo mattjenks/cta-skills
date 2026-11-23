@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Uses conventional types, `fix` for the bug fix and `docs` for the README.
+Reads the staged diff (git diff --staged) first and gives conventional subjects, `fix(...)` and `docs(...)`, in imperative mood of at most 72 characters.

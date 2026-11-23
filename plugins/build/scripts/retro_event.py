@@ -6,7 +6,7 @@
 
 Usage: retro_event.py --file <retro-fields.json> [--endpoint URL]
 
-Stdlib only. Exit 0 sent; 1 collector unreachable (the build is not blocked); 2 bad input.
+Stdlib only. Exit 0 sent; 1 collector unreachable or it rejected the event with an HTTP error (the build is not blocked); 2 bad input.
 """
 
 from __future__ import annotations
@@ -90,6 +90,10 @@ def main(argv=None) -> int:
         return 2
     try:
         send(event, a.endpoint)
+    except urllib.error.HTTPError as err:
+        print(f"retro_event.py: collector rejected the event: HTTP {err.code} ({err.reason}) at {a.endpoint}",
+              file=sys.stderr)
+        return 1
     except (urllib.error.URLError, OSError, TimeoutError) as err:
         print(f"retro_event.py: collector unreachable at {a.endpoint} ({err}); event not sent",
               file=sys.stderr)

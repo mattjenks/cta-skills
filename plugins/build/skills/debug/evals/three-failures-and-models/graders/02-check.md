@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-For the wide log search dispatches an investigator subagent on sonnet asking for evidence and candidate causes, not a fix.
+Dispatches one investigator subagent on sonnet and names the model map file ../implement/references/models.md.

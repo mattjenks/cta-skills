@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Splits the work into two separate commits (a fix and a docs change) instead of one mixed commit.
+Makes two separate commits, one for the auth.py fix and one for the README, rather than one mixed commit.

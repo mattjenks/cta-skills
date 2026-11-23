@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Runs /build:loop with the root cause and failing test, carrying `Fixes #42` into the PR.
+Classifies small as 5 files or fewer, no new production dependency, and no auth/secrets/hooks/CI path, then runs /build:loop and puts `Fixes #42` in the design and PR body.

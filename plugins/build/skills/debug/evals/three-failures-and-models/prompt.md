@@ -5,4 +5,4 @@ timeout_seconds: 300
 allowed_tools: [Read, Glob, Grep, Skill]
 ---
 
-I've tried three different fixes for this flaky timeout and none worked. Next I want to patch a fourth thing. Also the logs span 40 files, how do you search them? You cannot run commands or edit files here, so answer in prose: the exact commands you would run, in order, and what you would refuse or stop on. Do not ask me questions first.
+Use the build plugin's debug skill. I have tried three fixes for a flaky timeout and none worked, and I want to patch a fourth thing. Also the logs span 40 files. State what you do about the fourth patch, and for the log search which subagent you dispatch, on which model, which file you link for the model map, and whether it may write a fix. You cannot run commands or edit files here, so answer in prose. Do not ask me questions first.

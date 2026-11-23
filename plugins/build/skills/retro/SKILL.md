@@ -40,8 +40,9 @@ Write the fixed fields to a scratch JSON file (keys in `references/retro-templat
 `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/retro_event.py" --file <retro-fields.json>`.
 
 - Exit 0: sent as the `cta.build` event.
-- Exit 1: the collector at 127.0.0.1:4318 is unreachable. Say so in the report and in `retro.md`; this does not
-  block anything. Never retry in a loop.
+- Exit 1: the collector at 127.0.0.1:4318 is unreachable, or it answered with an HTTP error (the message says
+  "collector rejected the event: HTTP <code>"; report that, not "down"). Say which in the report and in
+  `retro.md`; this does not block anything. Never retry in a loop.
 - Exit 2: a field is invalid; fix the file and run it once more.
 
 ## 5. Commit

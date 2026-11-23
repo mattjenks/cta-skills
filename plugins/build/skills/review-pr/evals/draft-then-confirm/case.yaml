@@ -1,4 +1,4 @@
 schema_version: "1.1"
 name: draft-then-confirm
 expected_outcome: |
-  Reviews, drafts, and posts only after a yes.
+  review-pr: sonnet reviewer, draft file, owner confirmation, gh pr review.

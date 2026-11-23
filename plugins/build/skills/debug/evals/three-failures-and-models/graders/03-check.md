@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Reproduces and gathers evidence first, tracing the bad value to where it first went wrong.
+The investigator returns evidence and candidate causes, not a fix.

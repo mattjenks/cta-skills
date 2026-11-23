@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Stops patching and questions the design or asks the owner after three failed hypotheses instead of a fourth fix.
+Stops after three failed hypotheses and questions the design or asks the owner instead of a fourth patch.

@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Posts with gh pr review only after the confirmation and never merges.
+Posts only after confirmation with `gh pr review` using --body-file (with --approve, --request-changes or --comment), and never merges.

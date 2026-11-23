@@ -4,4 +4,4 @@ focus: trace
 weight: 1
 ---
 
-Dispatches the reviewer subagent on sonnet (mid-tier), not haiku.
+The reviewer subagent runs on sonnet, and the model map ../implement/references/models.md is named.
