@@ -17,9 +17,9 @@ A GitHub issue becomes a build: understand it, find the cause, then take the sam
    expected behavior; if they are missing, ask the reporter's questions of the owner once, in one message.
 2. **Find the cause.** Run `/build:debug` with the issue as the symptom. It ends at a stated root cause and a
    failing test, and writes no fix.
-3. **Classify** the fix by the loop's rule: **small** is 5 files or fewer changed, no new production
-   dependency, and no path matching auth, secrets, hooks or CI; anything else is **normal**. Say which and
-   why; the owner can override.
+3. **Classify** the fix by the loop's rule (`/build:design` section 5): **small** is 5 files or fewer
+   changed (tests and docs not counted), no new production dependency, and no change to a security
+   boundary; anything else is **normal**. Say which and why; the owner can override.
 4. **Run the loop.** `/build:loop` with the issue, the root cause and the failing test as the request,
    passing the classification so the design stays short. The design names the issue (`Fixes #<n>`), and the
    PR body carries the same line so the issue closes on the owner's merge.

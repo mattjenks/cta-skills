@@ -23,7 +23,8 @@ step is `/build:<skill>`, and each skill's own preconditions apply. Execution al
    updates: run `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/kbwork.py" gate --repo "$PWD"`. It calls
    `gate_installed` and, when the gate is missing or its hooksPath is stale, runs `install_gate` again and
    prints `reinstalled`. Announce a repair.
-3. Say the plan in one line: the stops ahead and that the owner approves the design (and the plan).
+3. Say the plan in one line: the stops ahead and that the owner approves the design (and the plan). The
+   owner's other decisions wait for the PR.
 
 ## 1. The chain
 
@@ -32,15 +33,22 @@ Announce each step as it starts ("Step 3 of 9: implement") and each stop as it i
 1. `/build:prime` (skip if the session already primed this repo).
 2. `/build:design`. **STOP**: the owner approves the design. The classification is announced here, as
    "Small: plan review skipped" or "Normal: plan review required", with its reason; the owner can override.
-3. `/build:plan`, **normal changes only**. A small change skips the plan and goes straight to implement.
-   **STOP**: the owner approves the plan.
-4. `/build:implement`. Stops it raises (a production dependency, a blocked task, the usage cap, hand-off) are
-   the loop's stops too; relay them and continue only on the owner's answer.
+3. `/build:plan`, **normal changes only**: it runs the security review of the design and plan together
+   (secure's plan mode). A small change skips the plan and goes straight to implement.
+   **STOP**: the owner approves the plan, with its threat model and accepted gaps.
+4. `/build:implement`. Stops it raises (a production dependency, a builder reporting `BLOCKED`, the usage cap,
+   hand-off) are the loop's stops too; relay them and continue only on the owner's answer. Review findings
+   never stop it: two fix rounds, then the rest goes to the PR.
 5. `/build:validate` over the whole branch.
-6. `/build:secure`. A scanner stop is a stop.
-7. `/build:review`.
-8. `/build:pr`. Its one STOP for proposed false positives is the loop's.
+6. `/build:secure` (scanners). A scanner that is missing or failed is a stop.
+7. `/build:review`: the one code review on the most capable model, spec, quality and security, at most two
+   fix rounds.
+8. `/build:pr`. Open findings, proposed false positives and known gaps go in the PR; the owner decides
+   before merge.
 9. `/build:retro`.
+
+Size decides the reviews: a small change gets the one code review (step 7); a normal change gets the
+plan-stage security review (step 3), a spec check per task (step 4) and the code review (step 7).
 
 ## 2. Rules
 

@@ -29,7 +29,9 @@ time. Facts, with numbers; no blame, no padding.
 
 ## 3. Ask for the rating
 
-Ask the owner for a 1 to 5 rating of the build (5 best) and one line on why. They may decline: record
+Ask the owner for a 1 to 5 rating of the build (5 best) and one line on why. Put a short summary in the
+question itself (outcome, PR links, what went well, what went wrong, what 5, 3 and 1 mean): a question
+dialog can hide the transcript, and the owner cannot rate what they cannot see. They may decline: record
 `rating` as empty and move on. Never invent or default a rating.
 
 ## 4. Send the event
