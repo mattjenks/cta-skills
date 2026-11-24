@@ -538,17 +538,24 @@ def _backlog(path: Path, day: str, over: list[Candidate]) -> None:
         return
     try:
         text = path.read_text()
-    except OSError:
-        text = "# Backlog\n\n"
+    except FileNotFoundError:
+        text = None  # only a missing file means start fresh; any other error propagates
+    seen = {key for line in (text or "").splitlines()
+            for key in re.findall(r"\(([^()\n]*)\)\s*$", line)}
     new = []
     for c in over:
         fp = _esc(c.fingerprint or c.skill, "md")
-        if fp in text or any(f"({fp})" in line for line in new):
+        if fp in seen:
             continue
+        seen.add(fp)
         new.append(f"- {day} {_esc(c.skill, 'md')}: {_esc(c.signal, 'md')} ({fp})")
     if new:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text.rstrip("\n") + "\n" + "\n".join(new) + "\n")
+        if text is None:
+            path.write_text("# Backlog\n\n" + "\n".join(new) + "\n")
+        else:
+            with path.open("a") as f:
+                f.write(("" if text.endswith("\n") or not text else "\n") + "\n".join(new) + "\n")
 
 
 def build(cfg: learn_config.LearnConfig, end: date) -> Report:

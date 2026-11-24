@@ -375,6 +375,38 @@ def test_backlog_overflow_not_duplicated(tmp_path, monkeypatch):
     assert text.count("skill1") == 2
 
 
+def _over_one(skill):
+    return Candidate(skill=skill, signal="cost_growth", fingerprint=f"{skill}|cost_growth",
+                     metric="cost_ratio", value=2.0, threshold=1.5, sessions=4, evidence=[],
+                     panel="p")
+
+
+def test_backlog_overflow_prefix_collision(tmp_path):
+    path = tmp_path / "backlog.md"
+    report._backlog(path, "2026-11-16", [_over_one("code-review")])
+    report._backlog(path, "2026-11-23", [_over_one("review")])
+    lines = path.read_text().splitlines()
+    assert any(l.startswith("- 2026-11-16 code-review") for l in lines)
+    assert any(l.startswith("- 2026-11-23 review") for l in lines)
+
+
+def test_backlog_read_error_does_not_overwrite(tmp_path, monkeypatch):
+    path = tmp_path / "backlog.md"
+    path.write_text("# Backlog\n\n- keep me\n")
+    real = type(path).read_text
+
+    def boom(self, *a, **k):
+        if self == path:
+            raise PermissionError("denied")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(path), "read_text", boom)
+    with pytest.raises(OSError):
+        report._backlog(path, "2026-11-23", [_over_one("review")])
+    monkeypatch.undo()
+    assert path.read_text() == "# Backlog\n\n- keep me\n"
+
+
 def test_render_drops_foreign_links(tmp_path):
     r = _report(links={"grafana": "https://evil.example/phish",
                        "panel:Cost by skill (USD, range)": "https://evil.example/p"},
