@@ -31,7 +31,7 @@
     },
     {
       "name": "build",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "displayName": "CTA Build",
       "source": "./plugins/build",
       "description": "Chief Technology Assistant build loop: plan-driven implementation, review and security gates, and knowledge-base write-back for the build stage.",
