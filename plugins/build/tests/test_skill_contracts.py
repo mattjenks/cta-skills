@@ -417,8 +417,43 @@ def test_secure_scan_stop_and_status_rules():
     )
 
 
-def test_secure_never_writes_owner_only_statuses():
-    has("secure", r"never write[^.]*(false-positive|accepted-risk)|owner[^.]*(false-positive|accepted-risk)")
+def test_secure_builder_only_proposes():
+    has(
+        "secure",
+        r"never write[^.]*(false-positive|accepted-risk)",
+        r"review[^.]*closes",
+        r"accepted risk[^.]*stays `?open`?",
+    )
+    assert not re.search(r"hook", (SKILLS / "secure" / "SKILL.md").read_text(), re.I)
+
+
+def test_review_closes_proposed_false_positives():
+    for name in ("review", "review/references/final-review"):
+        body = (SKILLS / f"{name}.md" if "/" in name else SKILLS / name / "SKILL.md").read_text()
+        for pattern in (
+            r"proposed-false-positive",
+            r"closed_by",
+            r"reason",
+            r"never `?accepted-risk`?",
+            r"back to `?open`?",
+        ):
+            assert re.search(pattern, body, re.I | re.S), f"{name}: missing /{pattern}/"
+    has("review", r"builder never closes", r"secure\.py\" verify|secure\.py verify")
+    has(
+        "review",
+        r"<folder>/security\.json.{0,40}\[FINDINGS_PATH\]",
+        r"apply the reviewer's answer",
+        r"do not judge",
+        r"exit 6",
+    )
+    ref = (SKILLS / "review/references/final-review.md").read_text()
+    for pattern in (r"\[FINDINGS_PATH\]", r"`close`", r"`reopen`"):
+        assert re.search(pattern, ref), f"final-review: missing /{pattern}/"
+
+
+def test_no_finding_guard_prose_anywhere():
+    for skill in ALL_SKILLS:
+        assert not re.search(r"finding[-_]guard", text(skill), re.I), skill
 
 
 def test_secure_credits_sources():
@@ -486,21 +521,22 @@ def test_pr_verifies_security_json_with_the_script():
     has("pr", r"secure\.py\" verify|secure\.py verify", r"diff_hash", r"open")
 
 
-def test_pr_lists_findings_for_the_owner_and_never_writes_closures():
+def test_pr_lists_closures_and_open_findings_and_never_writes_closures():
     has(
         "pr",
         r"proposed-false-positive",
         r"Do not stop",
         r"Open findings",
         r"Known gaps",
-        r"whole batch",
-        r"verbatim",
         r"closed_by",
-        r"never write `?false-positive`?|never write [^.]*accepted-risk",
+        r"never writes? `?false-positive`?|never writes? [^.]*accepted-risk",
         r"closures\.md",
-        r"apply[\s\S]{0,80}themselves|owner applies|owner makes",
-        r"re-?verif|verify again|run `?verify`? again",
+        r"reviewer closure|closed by the reviewer|review closed",
+        r"/build:review",
+        r"merg[^.]*Open findings|Open findings[^.]*merg",
     )
+    body = text("pr")
+    assert not re.search(r"finding[-_]guard|hook|owner applies|apply[\s\S]{0,80}themselves", body, re.I)
 
 
 def test_pr_pushes_and_opens_two_linked_prs_then_clears_pointer_last():

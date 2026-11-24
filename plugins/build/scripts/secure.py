@@ -5,7 +5,7 @@
 """Branch security scan for `/build:secure`: run the scanners, write or refresh the findings record.
 
   secure.py scan --repo R --base B --out FILE   full_scan of B..HEAD; writes head and diff_hash
-  secure.py verify --repo R --base B --file FILE  record current and everything resolved (exit 0, 4, 5, 6)
+  secure.py verify --repo R --base B --file FILE  record current and everything resolved (exit 0, 4, 5, 6; 6 = only proposals wait on the reviewer)
 
 Exit 0 ok, 2 bad input, 3 STOP: a scanner is missing or failed (the install command is printed,
 nothing is written, nothing is skipped). A rescan is the only way head and diff_hash change, so they
@@ -46,10 +46,15 @@ def _head(repo: Path) -> str:
                           text=True, env=findings.git_env()).stdout.strip()
 
 
+def _filled(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 def verify(repo: Path, base: str, path: Path) -> int:
     """What `pr` checks: the record describes the branch as it is now and nothing waits.
     0 clean; 4 missing, unreadable or stale (diff_hash differs); 5 findings still open (or closed
-    without `closed_by`); 6 only `proposed-false-positive` entries wait on the owner (JSON on stdout)."""
+    without a `reason` and a `closed_by`); 6 only `proposed-false-positive` entries wait on the
+    reviewer (JSON on stdout, a message on stderr)."""
     try:
         rec = findings.load(path)
         current = findings.diff_hash(repo, base, "HEAD")
@@ -62,13 +67,16 @@ def verify(repo: Path, base: str, path: Path) -> int:
               file=sys.stderr)
         return 4
     blocking = [f for f in entries if f.get("status") == "open"
-                or (f.get("status") in findings.MATT_ONLY and not f.get("closed_by"))
-                or f.get("status") not in findings.ASSISTANT_STATUSES | findings.MATT_ONLY]
+                or (f.get("status") in findings.CLOSED
+                    and not (_filled(f.get("reason")) and _filled(f.get("closed_by"))))
+                or f.get("status") not in findings.ASSISTANT_STATUSES | findings.CLOSED]
     if blocking:
         print("secure.py: findings still open: " + ", ".join(str(f.get("id")) for f in blocking), file=sys.stderr)
         return 5
     proposed = [f for f in entries if f.get("status") == "proposed-false-positive"]
     if proposed:
+        print("secure.py: only proposed-false-positive entries remain; the reviewer in /build:review "
+              "closes them or sends them back", file=sys.stderr)
         print(json.dumps({"proposed": proposed}, indent=2))
         return 6
     return 0

@@ -7,7 +7,8 @@ import pytest
 import findings
 from findings import (
     ASSISTANT_STATUSES,
-    MATT_ONLY,
+    CLOSED,
+    REVIEWER_STATUSES,
     Finding,
     diff_hash,
     load,
@@ -98,8 +99,11 @@ def test_open_findings(tmp_path):
 
 def test_status_sets():
     assert ASSISTANT_STATUSES == {"open", "fixed", "proposed-false-positive"}
-    assert MATT_ONLY == {"false-positive", "accepted-risk"}
-    assert not ASSISTANT_STATUSES & MATT_ONLY
+    assert CLOSED == {"false-positive", "accepted-risk"}
+    assert not ASSISTANT_STATUSES & CLOSED
+    assert REVIEWER_STATUSES == {"false-positive"}
+    assert REVIEWER_STATUSES <= CLOSED
+    assert not hasattr(findings, "MATT_ONLY")
 
 
 def test_record_keys_and_roundtrip(tmp_path):
