@@ -36,6 +36,24 @@
           "jsonpath": "$.plugins[?(@.name=='build')].version"
         }
       ]
+    },
+    "plugins/learn": {
+      "release-type": "simple",
+      "component": "learn",
+      "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": true,
+      "extra-files": [
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "/.claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[?(@.name=='learn')].version"
+        }
+      ]
     }
   }
 }

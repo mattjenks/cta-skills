@@ -51,6 +51,28 @@
         "security",
         "claude-code"
       ]
+    },
+    {
+      "name": "learn",
+      "version": "0.1.0",
+      "displayName": "CTA Learn",
+      "source": "./plugins/learn",
+      "description": "Chief Technology Assistant learn stage: a weekly report on how your skills perform, with recommendations you accept or reject.",
+      "author": {
+        "name": "Matt Jenks",
+        "url": "https://github.com/mattjenks"
+      },
+      "homepage": "https://github.com/mattjenks/cta-skills",
+      "repository": "https://github.com/mattjenks/cta-skills",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": [
+        "skills",
+        "learn",
+        "report",
+        "telemetry",
+        "claude-code"
+      ]
     }
   ]
 }
