@@ -41,7 +41,7 @@ End with `Verdict: APPROVED` (no Critical, no High) or `Verdict: CHANGES REQUEST
 ## After the review
 
 - Proposals: the controller applies the reviewer's answer and does not judge. `close` becomes `false-positive`
-  with the reviewer's `reason` and `closed_by: "review"`; `reopen` becomes `open` with the reviewer's reason.
+  with the reviewer's `reason` and `closed_by: "review"`; `reopen` sends it back to `open` with the reviewer's reason.
   An unanswered proposal stays as it is. Never `accepted-risk`.
 - The fix rounds take Critical and High; a Medium only when its fix sits in code the round already touches.
 - Whatever is still open after two rounds goes to the PR's Open findings; the owner decides before merge.
