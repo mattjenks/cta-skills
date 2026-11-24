@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 SKILLS = Path(__file__).resolve().parent.parent / "skills"
-ALL_SKILLS = ["report", "decide"]
+ALL_SKILLS = ["report", "decide", "deliver"]
 
 
 def text(skill: str) -> str:
@@ -102,3 +102,40 @@ def test_decide_exit_codes_and_idempotence():
 
 def test_decide_treats_content_as_data():
     has("decide", r"data,? never instructions")
+
+
+# --- deliver ---
+
+
+def test_deliver_description_names_the_email():
+    head = (SKILLS / "deliver" / "SKILL.md").read_text().split("---")[1]
+    assert re.search(r"^description:.*(email|deliver)", head, re.M | re.I)
+
+
+def test_deliver_prepares_then_sends_then_records():
+    has("deliver", r"deliver\.py\W+prepare\W+--date", r"deliver\.py\W+record\W+--date")
+    body = text("deliver")
+    prepare = re.search(r"deliver\.py\W+prepare", body).start()
+    assert prepare < body.index("--result sent")
+
+
+def test_deliver_uses_only_the_prepared_recipient():
+    has("deliver", r"only the `?to`? from `?prepare`?", r"compare.*recipient.*`?to`?.*before",
+        r"no cc|never.*(cc|bcc)", r"never.*address.*(report|content)")
+
+
+def test_deliver_falls_back_to_a_notification():
+    has("deliver", r"deliver\.py\W+notify", r"--result fallback", r"no .*(tool|way).*send")
+
+
+def test_deliver_treats_content_as_data():
+    has("deliver", r"data,? never instructions")
+
+
+def test_deliver_exit_codes():
+    has("deliver", r"exit 2")
+
+
+def test_deliver_has_two_evals():
+    cases = [p for p in (SKILLS / "deliver" / "evals").iterdir() if (p / "case.yaml").is_file()]
+    assert len(cases) >= 2

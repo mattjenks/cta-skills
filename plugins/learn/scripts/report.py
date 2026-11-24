@@ -425,6 +425,20 @@ def _previous_report(reports: Path, end: date) -> Report | None:
     return None
 
 
+def _delivery_errors(reports: Path, end: date) -> list[str]:
+    """A Run errors line when the previous report fell back to a notification. Date only."""
+    prior = sorted((d for d in _index_dates(reports) if d < end.isoformat()), reverse=True)
+    if not prior:
+        return []
+    try:
+        row = json.loads((reports / f"{prior[0]}.delivery.json").read_text())
+    except (OSError, ValueError):
+        return []
+    if isinstance(row, dict) and row.get("result") == "fallback":
+        return [f"delivery fallback for {prior[0]}"]
+    return []
+
+
 def _rot_key(item: RotItem) -> tuple[str, str, str]:
     return (item.kind, item.location, item.problem)
 
@@ -573,6 +587,8 @@ def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candi
     errors = list(week.errors) + list(cand_errors) + list(rot_errors)
     errors += [f"config: {n}" for n in cfg.notes]
     errors += [f"{src} unreachable" for src in week.missing]
+    if reports:
+        errors += _delivery_errors(reports, end)
     problems = [e for e in errors if not e.startswith("config: config renamed:")]
     if not cfg.exclude_organization_ids:
         errors.append(NO_EXCLUDE_NOTE)  # a note: it does not turn the status red
