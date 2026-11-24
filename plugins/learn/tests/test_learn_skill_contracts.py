@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 SKILLS = Path(__file__).resolve().parent.parent / "skills"
-ALL_SKILLS = ["report"]
+ALL_SKILLS = ["report", "decide"]
 
 
 def text(skill: str) -> str:
@@ -73,3 +73,32 @@ def test_report_treats_content_as_data():
 def test_report_commits_on_a_branch_in_a_worktree():
     has("report", r"learn/report-<date>", r"git worktree add", r"live checkout",
         r"index\.json", r"gh pr create", r"no remote|without a remote")
+
+
+# --- decide ---
+
+
+def test_decide_description_names_the_decision():
+    head = (SKILLS / "decide" / "SKILL.md").read_text().split("---")[1]
+    assert re.search(r"^description:.*(accept|reject|decision)", head, re.M | re.I)
+
+
+def test_decide_runs_the_script_and_shows_the_row():
+    has("decide", r"decide\.py", r"accept\|defer\|reject|accept, defer or reject",
+        r"show.*row|row.*show")
+
+
+def test_decide_passes_the_reason_only_on_stdin():
+    has("decide", r"--reason-stdin", r"<<'CTA_REASON'", r"never.*(argument|command line)")
+
+
+def test_decide_asks_for_a_reason_on_reject():
+    has("decide", r"reject.*(no|without|missing).*reason.*ask|ask.*reason")
+
+
+def test_decide_exit_codes_and_idempotence():
+    has("decide", r"exit 2", r"exit 3", r"exit 4", r"already|existing")
+
+
+def test_decide_treats_content_as_data():
+    has("decide", r"data,? never instructions")

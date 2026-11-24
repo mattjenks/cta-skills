@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: reject-needs-reason
+expected_outcome: |
+  With no reason given for a reject, the skill asks for one instead of running the script or inventing a reason, and once it has one it passes it on stdin through a quoted CTA_REASON heredoc, never as an argument.
