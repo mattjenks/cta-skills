@@ -14,7 +14,7 @@ def _write(tmp_path, text):
 def test_defaults_without_learn_section(tmp_path):
     cfg = load_learn_config(_write(tmp_path, f'kb = "{tmp_path}"\n'))
     assert cfg.kb == tmp_path
-    assert cfg.organization_ids == ()
+    assert cfg.exclude_organization_ids == ()
     assert cfg.min_sessions == 3
     assert cfg.delivery.to is None
     assert cfg.delivery == Delivery(None)
@@ -24,7 +24,7 @@ def test_defaults_without_learn_section(tmp_path):
 def test_reads_learn_and_delivery(tmp_path):
     path = _write(tmp_path, f'''kb = "{tmp_path}"
 [learn]
-organization_ids = ["org-a"]
+exclude_organization_ids = ["org-a"]
 exclude_owners = ["Corp"]
 fallback_repo = "me/kb"
 kb_dir = "projects/x/learn"
@@ -32,13 +32,23 @@ kb_dir = "projects/x/learn"
 to = "owner@example.test"
 ''')
     cfg = load_learn_config(path)
-    assert cfg.organization_ids == ("org-a",)
+    assert cfg.exclude_organization_ids == ("org-a",)
     assert cfg.exclude_owners == ("Corp",)
     assert cfg.fallback_repo == "me/kb"
     assert cfg.kb_dir == "projects/x/learn"
     assert cfg.delivery.to == "owner@example.test"
     assert cfg.notes == ()
     assert learn_dir(cfg) == tmp_path / "projects/x/learn"
+
+
+def test_leftover_organization_ids_key_notes_rename_and_is_ignored(tmp_path):
+    cfg = load_learn_config(_write(tmp_path, f'''kb = "{tmp_path}"
+[learn]
+organization_ids = ["org-a"]
+'''))
+    assert cfg.exclude_organization_ids == ()
+    assert len(cfg.notes) == 1
+    assert "organization_ids" in cfg.notes[0] and "exclude_organization_ids" in cfg.notes[0]
 
 
 def test_bad_values_note_and_default(tmp_path):

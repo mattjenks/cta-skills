@@ -8,10 +8,11 @@ from gather import GatherError
 
 END = date(2026, 11, 23)
 ORG = "org-a"
+WORK = "org-work"
 
 
 def _cfg(tmp_path, owners=("Corp",)):
-    return learn_config.LearnConfig(kb=tmp_path, organization_ids=(ORG,), exclude_owners=owners)
+    return learn_config.LearnConfig(kb=tmp_path, exclude_organization_ids=(WORK,), exclude_owners=owners)
 
 
 def _row(skill, org, value, **extra):
@@ -58,7 +59,7 @@ def _cost_prom(rows, prev_rows=()):
 def test_personal_filter_drops_other_orgs_and_owners(tmp_path, monkeypatch):
     rows = [
         _row("cta:kept", ORG, 2.0),
-        _row("other:dropped-org", "org-b", 3.0),
+        _row("other:dropped-org", WORK, 3.0),
         _row("corp:dropped-owner", ORG, 4.0),
     ]
 
@@ -129,7 +130,7 @@ def test_work_events_dropped(tmp_path, monkeypatch):
         if "tool_decision" in logql:
             return [{"event_name": "tool_decision", "organization_id": ORG, "tool_name": "Bash",
                      "ts": "1763900000000000000"},
-                    {"event_name": "tool_decision", "organization_id": "org-b",
+                    {"event_name": "tool_decision", "organization_id": WORK,
                      "tool_name": "work-tool", "ts": "1763900000000000001"},
                     {"event_name": "tool_decision", "tool_name": "no-org",
                      "ts": "1763900000000000002"}]
@@ -137,7 +138,7 @@ def test_work_events_dropped(tmp_path, monkeypatch):
 
     _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 1.0)]), loki=loki)
     week = gather.gather(_cfg(tmp_path), END)
-    assert [e["tool_name"] for e in week.events["tool_decision"]] == ["Bash"]
+    assert [e["tool_name"] for e in week.events["tool_decision"]] == ["Bash", "no-org"]
     assert set(week.events) == {"tool_decision", "tool_result", "mcp_server_connection",
                                 "plugin_loaded"}
     assert "work-tool" not in json.dumps(asdict(week), default=str)
@@ -181,8 +182,28 @@ def test_personal_helper(tmp_path):
     assert gather.personal(cfg, ORG, None) is True
     assert gather.personal(cfg, ORG, "Other/x") is True
     assert gather.personal(cfg, ORG, "Corp/x") is False
-    assert gather.personal(cfg, "org-b", None) is False
-    assert gather.personal(cfg, None, None) is False
+    assert gather.personal(cfg, WORK, None) is False
+    assert gather.personal(cfg, "org-b", None) is True
+    assert gather.personal(cfg, None, None) is True
+    assert gather.personal(cfg, None, "Corp/x") is False
+
+
+def test_empty_config_keeps_every_org(tmp_path, monkeypatch):
+    rows = [_row("cta:a", ORG, 2.0), _row("cta:b", "org-b", 1.0), _row("cta:c", "", 1.0)]
+
+    def loki(logql, start, end):
+        if "tool_decision" in logql:
+            return [{"event_name": "tool_decision", "organization_id": o, "tool_name": n,
+                     "ts": "1763900000000000000"}
+                    for o, n in ((ORG, "A"), ("org-b", "B"), (None, "C"))]
+        return []
+
+    _install(monkeypatch, tmp_path, prom=_cost_prom(rows), loki=loki)
+    cfg = learn_config.LearnConfig(kb=tmp_path)
+    assert gather.personal(cfg, "anything", "Corp/x") is True
+    week = gather.gather(cfg, END)
+    assert {s.skill for s in week.skills} == {"cta:a", "cta:b", "cta:c"}
+    assert [e["tool_name"] for e in week.events["tool_decision"]] == ["A", "B", "C"]
 
 
 def test_events_carry_no_identity_fields(tmp_path, monkeypatch):
@@ -241,7 +262,7 @@ def test_invocations_sessions_and_previous_week(tmp_path, monkeypatch):
             return [_activated("cta:kept", "s0")]
         return [_activated("cta:kept", "s1"), _activated("cta:kept", "s1"),
                 _activated("cta:kept", "s2"), _activated("work:other", "s3"),
-                _activated("cta:kept", "s9", org="org-b")]
+                _activated("cta:kept", "s9", org=WORK)]
 
     rows = [_row("cta:kept", ORG, 2.0), _row("cta:quiet", ORG, 1.0)]
     _install(monkeypatch, tmp_path, prom=_cost_prom(rows), loki=loki)
@@ -274,7 +295,7 @@ def test_tool_result_events_fetched_filtered_and_stripped(tmp_path, monkeypatch)
                      "success": "false", "tool_name": "Bash", "tool_parameters": "PARAMTEXT",
                      "tool_input": "CMDTEXT", "user_email": "a@example.test",
                      "ts": "1763900000000000000"},
-                    {"event_name": "tool_result", "organization_id": "org-b",
+                    {"event_name": "tool_result", "organization_id": WORK,
                      "skill_name": "work:x", "success": "false", "ts": "1763900000000000001"}]
         return []
 

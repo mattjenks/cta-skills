@@ -42,7 +42,7 @@ class Delivery:
 class LearnConfig:
     kb: Path | None
     kb_dir: str = "learn"
-    organization_ids: tuple[str, ...] = ()
+    exclude_organization_ids: tuple[str, ...] = ()
     exclude_owners: tuple[str, ...] = ()
     fallback_repo: str | None = None
     prometheus_url: str = "http://127.0.0.1:9090"
@@ -140,10 +140,14 @@ def load_learn_config(path: Path | None = None) -> LearnConfig:
                     notes.append(f"config invalid: learn.delivery.{key}: must be a non-empty string")
         delivery = Delivery(fields.pop("to", None), **fields)
 
+    if "organization_ids" in section:
+        notes.append("config renamed: learn.organization_ids is ignored; "
+                     "use learn.exclude_organization_ids to list work organizations")
+
     return LearnConfig(
         kb=base.kb,
         kb_dir=kb_dir,
-        organization_ids=_str_list(section, "organization_ids", notes),
+        exclude_organization_ids=_str_list(section, "exclude_organization_ids", notes),
         exclude_owners=_str_list(section, "exclude_owners", notes),
         fallback_repo=fallback_repo,
         prometheus_url=_url(section, "prometheus_url", "http://127.0.0.1:9090", notes),

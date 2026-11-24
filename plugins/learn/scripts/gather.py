@@ -5,8 +5,8 @@
 """Gather one week of skill usage from Prometheus and Loki into a `Week`.
 
 Missing data is reported (`missing`, `errors`), never turned into a zero. Every string that
-enters the `Week` goes through `sanitize`. Only events carrying a configured organization_id
-are kept (personal scope).
+enters the `Week` goes through `sanitize`. Events and skills of an excluded organization_id
+(`exclude_organization_ids`) or marketplace owner are dropped (personal scope).
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def _owner(repo: str | None) -> str | None:
 
 def personal(cfg: learn_config.LearnConfig, org_id: str | None,
              marketplace_owner: str | None) -> bool:
-    if not org_id or org_id not in cfg.organization_ids:
+    if org_id and org_id in cfg.exclude_organization_ids:
         return False
     owner = marketplace_owner.split("/")[0] if marketplace_owner else None
     if owner and owner.lower() in {o.lower() for o in cfg.exclude_owners}:
@@ -224,7 +224,7 @@ def gather(cfg: learn_config.LearnConfig, end: date) -> Week:
     def fetch(event: str, start: datetime, stop: datetime) -> list[dict]:
         nonlocal newest_ns, saw_loki
         rows = run.loki(f'{SELECTOR} | event_name="{event}"', start, stop)
-        rows = [r for r in rows if r.get("organization_id") in cfg.organization_ids]
+        rows = [r for r in rows if r.get("organization_id") not in cfg.exclude_organization_ids]
         for row in rows:
             try:
                 newest_ns = max(newest_ns, int(row.get("ts", 0)))
