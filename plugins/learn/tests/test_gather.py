@@ -288,15 +288,74 @@ def test_prev_invocations_none_when_prior_week_has_no_rows(tmp_path, monkeypatch
     assert week.skills[0].prev_invocations is None
 
 
+def _result(session, ts, success="false", org=ORG, **extra):
+    return {"event_name": "tool_result", "organization_id": org, "session_id": session,
+            "success": success, "tool_name": "Bash", "ts": str(ts), **extra}
+
+
+def _attrib_loki(activations, results):
+    def loki(logql, start, end):
+        if 'event_name="skill_activated"' in logql and end > gather.week_end(END) - timedelta(days=1):
+            return activations
+        if 'event_name="tool_result"' in logql:
+            return results
+        return []
+    return loki
+
+
+def _by_ts(week):
+    return {int(r["ts"]): r.get("skill_name") for r in week.events["tool_result"]}
+
+
+def test_tool_results_attributed_to_latest_activation_in_session(tmp_path, monkeypatch):
+    acts = [_activated("cta:first", "s1", ts=100), _activated("cta:second", "s1", ts=200)]
+    results = [_result("s1", 150), _result("s1", 200), _result("s1", 250)]
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:first", ORG, 1.0)]),
+             loki=_attrib_loki(acts, results))
+    week = gather.gather(_cfg(tmp_path), END)
+    assert _by_ts(week) == {150: "cta:first", 200: "cta:second", 250: "cta:second"}
+
+
+def test_tool_result_before_any_activation_is_unattributed(tmp_path, monkeypatch):
+    acts = [_activated("cta:first", "s1", ts=100)]
+    results = [_result("s1", 50, skill_name="cta:first")]
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:first", ORG, 1.0)]),
+             loki=_attrib_loki(acts, results))
+    week = gather.gather(_cfg(tmp_path), END)
+    assert _by_ts(week) == {50: None}
+
+
+def test_other_sessions_activation_is_never_used(tmp_path, monkeypatch):
+    acts = [_activated("cta:first", "s1", ts=100)]
+    results = [_result("s2", 150), _result("s1", 150), _result(None, 150)]
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:first", ORG, 1.0)]),
+             loki=_attrib_loki(acts, results))
+    week = gather.gather(_cfg(tmp_path), END)
+    got = {r.get("session_id") or None: r.get("skill_name") for r in week.events["tool_result"]}
+    assert got == {"s2": None, "s1": "cta:first", None: None}
+
+
+def test_excluded_org_activation_is_not_used_for_attribution(tmp_path, monkeypatch):
+    acts = [_activated("work:x", "s1", ts=100, org=WORK)]
+    results = [_result("s1", 150)]
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:first", ORG, 1.0)]),
+             loki=_attrib_loki(acts, results))
+    week = gather.gather(_cfg(tmp_path), END)
+    assert _by_ts(week) == {150: None}
+    assert "work:x" not in json.dumps(asdict(week), default=str)
+
+
 def test_tool_result_events_fetched_filtered_and_stripped(tmp_path, monkeypatch):
     def loki(logql, start, end):
         if 'event_name="tool_result"' in logql:
-            return [{"event_name": "tool_result", "organization_id": ORG, "skill_name": "cta:kept",
+            return [{"event_name": "tool_result", "organization_id": ORG, "session_id": "s1",
                      "success": "false", "tool_name": "Bash", "tool_parameters": "PARAMTEXT",
                      "tool_input": "CMDTEXT", "user_email": "a@example.test",
                      "ts": "1763900000000000000"},
                     {"event_name": "tool_result", "organization_id": WORK,
                      "skill_name": "work:x", "success": "false", "ts": "1763900000000000001"}]
+        if 'event_name="skill_activated"' in logql:
+            return [_activated("cta:kept", "s1", ts="1763899999000000000")]
         return []
 
     _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 1.0)]), loki=loki)

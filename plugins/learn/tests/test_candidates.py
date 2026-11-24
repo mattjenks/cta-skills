@@ -123,6 +123,15 @@ def test_failures_signal():
     assert cand and cand.value == 0.2 and cand.threshold == 0.10 and cand.signal == "failures"
 
 
+def test_failures_evidence_says_attributed_by_session():
+    from signals import failures
+    ev = [{"skill_name": "cta:x", "success": "false"}] * 2
+    week = _week([_skill("cta:x")], events={"tool_result": ev})
+    cand = failures.evaluate(week, week.skills[0])
+    assert "tool calls attributed by session" in cand.evidence
+    assert cand.evidence[0] == "2 of 2 tool calls failed (100.0%)"
+
+
 def test_cost_growth_signal():
     from signals import cost_growth
     s = _skill("cta:x", cost=3.0, prev_cost=1.0)
@@ -162,7 +171,7 @@ def test_evidence_lines_match_template(tmp_path):
     assert {c.signal for c in chosen + overflow} == {"drift", "failures", "cost_growth"}
     template = re.compile(r"(\d+ of \d+ (episodes|tool calls) [a-z ]+ \([\d.]+%\))"
                           r"|(threshold [\d.$x%]+)|(cost \$[\d.]+ against \$[\d.]+ the week before)"
-                          r"|(sessions \d+)")
+                          r"|(sessions \d+)|(tool calls attributed by session)")
     for c in chosen + overflow:
         assert c.evidence
         for line in c.evidence:

@@ -30,5 +30,6 @@ def evaluate(week: Week, skill: SkillUsage) -> Candidate | None:
         skill=skill.skill, signal=NAME, fingerprint=f"{skill.skill}|{NAME}",
         metric="tool_failure_share", value=share, threshold=THRESHOLD, sessions=skill.sessions,
         evidence=[f"{failed} of {len(known)} tool calls failed ({share * 100:.1f}%)",
-                  f"threshold {THRESHOLD * 100:.1f}%", f"sessions {skill.sessions}"],
+                  f"threshold {THRESHOLD * 100:.1f}%", f"sessions {skill.sessions}",
+                  "tool calls attributed by session"],
         panel=PANEL)

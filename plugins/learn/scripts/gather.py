@@ -148,6 +148,41 @@ def _clean_event(row: dict) -> dict:
     return out
 
 
+def _ts(row: dict) -> int | None:
+    try:
+        return int(row.get("ts"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _activation_index(rows: list[dict]) -> dict[str, list[tuple[int, str]]]:
+    """Per session, the (timestamp, skill) activations in time order."""
+    index: dict[str, list[tuple[int, str]]] = {}
+    for row in rows:
+        session, skill, ts = row.get("session_id"), row.get("skill_name"), _ts(row)
+        if session and skill and ts is not None:
+            index.setdefault(session, []).append((ts, sanitize.name(skill)))
+    for entries in index.values():
+        entries.sort()
+    return index
+
+
+def _attribute(event: dict, index: dict[str, list[tuple[int, str]]]) -> dict:
+    """Name the skill of the latest activation in the event's session at or before it.
+
+    No such activation: the event is unattributed (no `skill_name`) and no skill counts it.
+    """
+    out = {k: v for k, v in event.items() if k != "skill_name"}
+    ts = _ts(event)
+    if ts is None:
+        return out
+    for at, skill in reversed(index.get(event.get("session_id"), ())):
+        if at <= ts:
+            out["skill_name"] = skill
+            break
+    return out
+
+
 class _Run:
     """One gather pass: tracks errors and which sources are unreachable."""
 
@@ -312,8 +347,12 @@ def gather(cfg: learn_config.LearnConfig, end: date) -> Week:
     if drift_ns:
         week.freshness["drift"] = _iso_ns(drift_ns)
 
+    starts = _activation_index(activated)
     for event in EVENT_TYPES:
-        week.events[event] = [_clean_event(r) for r in fetch(event, start_dt, end_dt)]
+        rows = [_clean_event(r) for r in fetch(event, start_dt, end_dt)]
+        if event == "tool_result":
+            rows = [_attribute(r, starts) for r in rows]
+        week.events[event] = rows
 
     if newest_ns:
         week.freshness["loki"] = _iso_ns(newest_ns)
