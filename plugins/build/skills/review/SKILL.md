@@ -70,8 +70,9 @@ The review never stops the build. After the last round:
    goes to the PR. A proposal the reviewer did not answer stays as it is. Edit each entry with Edit.
 2. Rescan so the record matches the tree: `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/secure.py" scan
    --repo "$PWD" --base BASE --out <folder>/security.json`, then `secure.py verify` (as `/build:pr` runs it)
-   to confirm no proposal is left. Exit 6 means one is: go back to step 1 and re-ask the reviewer for the
-   unanswered ones.
+   to confirm no proposal is left. Exit 6 means one is (an unanswered one, or one the fix rounds added):
+   re-ask the reviewer once for those, apply its answers and rescan; a proposal still unanswered after that
+   is left for `/build:pr`, which lists it.
 3. Write `<folder>/pr-notes.md`: **Open findings** (every Critical or High still open, with file, line and
    what the rounds tried; the owner decides each before merge; plus every ledger `open at PR` line copied
    as is, an Important there counting as High, whatever the reviewer said of it) and **Known gaps** (the accepted gaps the

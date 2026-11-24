@@ -27,7 +27,8 @@ It never writes. Exit codes:
   (as `/build:review` section 4 does) and verify again. Never open a PR on a record for a different tree.
 - 5: findings are still `open`. Do not stop: each goes into the PR's **Open findings** (section 2).
 - 6: `proposed-false-positive` entries are still unresolved: the review step did not close them. Go back
-  to `/build:review` to resolve them, then rescan and verify again. Do not hand them to the owner.
+  to `/build:review` once to resolve them, then rescan and verify again; if review already re-asked, list
+  each unresolved entry under Open findings for the owner.
 - 0: continue.
 
 ## 2. Findings and closures, in the PR
