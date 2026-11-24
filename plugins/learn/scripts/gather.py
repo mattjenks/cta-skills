@@ -179,17 +179,6 @@ class _Run:
             self.week.missing.append(exc.source)
 
 
-def _by_skill(rows: list[dict]) -> dict[tuple[str, str], dict]:
-    out = {}
-    for row in rows:
-        metric = row.get("metric") or {}
-        value = _num(row.get("value"))
-        skill, org = metric.get("skill_name"), metric.get("organization_id")
-        if skill and value is not None:
-            out[(skill, org or "")] = {"value": value, "type": metric.get("type")}
-    return out
-
-
 def _sum_rows(rows: list[dict]) -> dict[tuple[str, str], dict[str, float]]:
     out: dict[tuple[str, str], dict[str, float]] = {}
     for row in rows:
@@ -213,10 +202,12 @@ def gather(cfg: learn_config.LearnConfig, end: date) -> Week:
     week = Week(start=end - timedelta(days=7), end=end)
     run = _Run(cfg, week)
 
+    # Same expressions as the dashboard panels (max_over_time over the range, [7d] for
+    # $__range), plus organization_id in the grouping for the personal filter.
     cost_q = ('sum by (skill_name, organization_id) '
-              '(increase(claude_code_cost_usage_USD_total{skill_name!=""}[7d]))')
+              '(max_over_time(claude_code_cost_usage_USD_total{skill_name!=""}[7d]))')
     tok_q = ('sum by (skill_name, organization_id, type) '
-             '(increase(claude_code_token_usage_tokens_total{skill_name!=""}[7d]))')
+             '(max_over_time(claude_code_token_usage_tokens_total{skill_name!=""}[7d]))')
     cost = _sum_rows(run.prom(cost_q, end_dt))
     tokens = _sum_rows(run.prom(tok_q, end_dt))
     prev_cost = _sum_rows(run.prom(cost_q, prev_end))
@@ -233,8 +224,7 @@ def gather(cfg: learn_config.LearnConfig, end: date) -> Week:
     def fetch(event: str, start: datetime, stop: datetime) -> list[dict]:
         nonlocal newest_ns, saw_loki
         rows = run.loki(f'{SELECTOR} | event_name="{event}"', start, stop)
-        rows = [r for r in rows if r.get("organization_id") in cfg.organization_ids
-                or event == "cta.skill_episode"]
+        rows = [r for r in rows if r.get("organization_id") in cfg.organization_ids]
         for row in rows:
             try:
                 newest_ns = max(newest_ns, int(row.get("ts", 0)))
