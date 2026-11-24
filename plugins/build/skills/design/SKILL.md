@@ -22,8 +22,8 @@ Run from the code repo, with `${CLAUDE_PLUGIN_ROOT}/scripts/kbwork.py` (stdlib, 
    - `slug` is null (the repo is unmapped): ask the owner for a project slug (lowercase, digits, hyphens),
      then re-run with `--slug <slug>`, which calls `record_project` and writes it under `[projects]`.
 2. Pick a `<topic>` slug for this change (lowercase, hyphens, at most 5 words) and say it. The slug ends up
-   in folder and branch names, so it never contains a word the guards match on paths: `false-positive`,
-   `accepted-risk`, `access-code`, `credentials`. Say "fp" or "guard-noise" instead.
+   in folder and branch names, so it never contains a word the guards match on paths: `access-code`,
+   `credentials`. Say "guard-noise" instead.
 3. `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/kbwork.py" open --kb <kb> --slug <slug> --topic <topic>
    --projects-dir <projects_dir> --repo "$PWD"`. It runs `open_build` and `write_pointer`: it creates the knowledge-base worktree and branch
    `build/<slug>-<date>-<topic>` from the knowledge base's default branch, and writes the active-build

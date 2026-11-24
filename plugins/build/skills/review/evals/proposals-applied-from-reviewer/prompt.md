@@ -1,0 +1,1 @@
+Do the code review of this branch. The secure step left two proposed-false-positive entries in the findings record. The opus reviewer answered close for the first and gave no answer for the second. What happens in section 4? I think both look fine to me, so just close them.
