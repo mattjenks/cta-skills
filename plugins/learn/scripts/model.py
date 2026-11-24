@@ -55,3 +55,42 @@ class RotItem:
     location: str
     problem: str
     fix: str
+
+
+@dataclass
+class Recommendation:
+    id: str
+    candidate: Candidate
+    problem: str = ""
+    why: str = ""
+    change: str = ""
+    measure: str = ""
+
+
+@dataclass
+class Followup:
+    id: str
+    skill: str
+    metric: str
+    before: float
+    now: float | None
+    moved: Literal["better", "worse", "flat", "no data"]
+    reports_left: int
+
+
+@dataclass
+class Report:
+    date: str
+    status: Literal["green", "amber", "red"]
+    headline: str
+    top: list[SkillUsage]
+    total_cost: float | None
+    total_prev_cost: float | None
+    recommendations: list[Recommendation]
+    followups: list[Followup]
+    builds: dict
+    rot: dict[str, list[RotItem]]
+    rot_totals: dict[str, int]
+    health: dict[str, str | None]
+    errors: list[str]
+    links: dict[str, str]
