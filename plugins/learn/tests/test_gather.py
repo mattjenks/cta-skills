@@ -201,3 +201,66 @@ def test_events_carry_no_identity_fields(tmp_path, monkeypatch):
     for leaked in ("a@example.test", "u1", "secret text", "raw body", "user_email"):
         assert leaked not in blob
     assert week.events["tool_decision"][0]["tool_name"] == "Bash"
+
+
+def test_cost_and_token_queries_mirror_dashboard_panels(tmp_path, monkeypatch):
+    calls = []
+
+    def prom(promql, at, is_prev):
+        calls.append((promql, at))
+        return []
+
+    _install(monkeypatch, tmp_path, prom=prom)
+    gather.gather(_cfg(tmp_path), END)
+    end_dt = gather.week_end(END)
+    prev_dt = end_dt - timedelta(days=7)
+    for metric in ("claude_code_cost_usage_USD_total", "claude_code_token_usage_tokens_total"):
+        qs = [(q, at) for q, at in calls if metric in q and "timestamp" not in q]
+        assert qs, metric
+        for q, _ in qs:
+            assert f"max_over_time({metric}{{" in q and "[7d]" in q
+            assert "increase(" not in q
+        assert {at for _, at in qs} >= {end_dt}
+    cost_ats = {at for q, at in calls if "cost_usage" in q and "timestamp" not in q}
+    assert cost_ats == {end_dt, prev_dt}
+
+
+def _activated(skill, session, ts="1763900000000000000", org=ORG):
+    return {"event_name": "skill_activated", "organization_id": org, "skill_name": skill,
+            "session_id": session, "ts": ts}
+
+
+def test_invocations_sessions_and_previous_week(tmp_path, monkeypatch):
+    end_dt = gather.week_end(END)
+
+    def loki(logql, start, end):
+        if "skill_activated" not in logql:
+            return []
+        if end <= end_dt - timedelta(days=7):
+            return [_activated("cta:kept", "s0")]
+        return [_activated("cta:kept", "s1"), _activated("cta:kept", "s1"),
+                _activated("cta:kept", "s2"), _activated("work:other", "s3"),
+                _activated("cta:kept", "s9", org="org-b")]
+
+    rows = [_row("cta:kept", ORG, 2.0), _row("cta:quiet", ORG, 1.0)]
+    _install(monkeypatch, tmp_path, prom=_cost_prom(rows), loki=loki)
+    week = gather.gather(_cfg(tmp_path), END)
+    by = {s.skill: s for s in week.skills}
+    assert (by["cta:kept"].invocations, by["cta:kept"].sessions) == (3, 2)
+    assert by["cta:kept"].prev_invocations == 1
+    assert by["cta:quiet"].invocations == 0
+    assert by["cta:quiet"].prev_invocations == 0
+
+
+def test_prev_invocations_none_when_prior_week_has_no_rows(tmp_path, monkeypatch):
+    end_dt = gather.week_end(END)
+
+    def loki(logql, start, end):
+        if "skill_activated" in logql and end > end_dt - timedelta(days=7):
+            return [_activated("cta:kept", "s1")]
+        return []
+
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 2.0)]), loki=loki)
+    week = gather.gather(_cfg(tmp_path), END)
+    assert week.skills[0].invocations == 1
+    assert week.skills[0].prev_invocations is None
