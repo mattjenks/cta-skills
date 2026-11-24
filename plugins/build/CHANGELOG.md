@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.2](https://github.com/mattjenks/cta-skills/compare/build-v1.0.1...build-v1.0.2) (2026-11-24)
+
+
+### Bug Fixes
+
+* **build:** design slug rule drops words no hook matches ([616c52d](https://github.com/mattjenks/cta-skills/commit/616c52dd5f1513bd049551f21db983151570ad4f))
+* **build:** final-review wording keeps back-to-open contract ([62f901f](https://github.com/mattjenks/cta-skills/commit/62f901f96441b1006022a5ec53b1e69fb66a877a))
+* **build:** proposals eval case is one YAML document ([e46bc29](https://github.com/mattjenks/cta-skills/commit/e46bc2944ff5d39afa9f578dfae4e4f763a54391))
+* **build:** review applies the reviewer's answer to proposals, passes findings path ([2d28053](https://github.com/mattjenks/cta-skills/commit/2d280536096840cef9169d5b90db3237f84a724b))
+* **build:** review re-asks the reviewer once on unanswered proposals ([7814ba1](https://github.com/mattjenks/cta-skills/commit/7814ba10142c26221e9c6701d0a7b3aa4a949b7d))
+
 ## [1.0.1](https://github.com/mattjenks/cta-skills/compare/build-v1.0.0...build-v1.0.1) (2026-11-23)
 
 
