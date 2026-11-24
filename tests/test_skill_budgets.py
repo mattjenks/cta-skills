@@ -96,6 +96,20 @@ def test_each_skill_has_evals(skill):
     _assert_clean(check_skill.check_evals(skill))
 
 
+EVAL_CASES = sorted(ROOT.glob("plugins/*/skills/*/evals/*/case.yaml"))
+
+
+@pytest.mark.parametrize("case", EVAL_CASES, ids=[str(c.relative_to(ROOT)) for c in EVAL_CASES])
+def test_eval_case_is_one_yaml_document(case):
+    """Each case.yaml is one document with the keys the eval runner reads at column 0."""
+    lines = case.read_text().splitlines()
+    assert "---" not in lines, f"{case.relative_to(ROOT)}: more than one YAML document"
+    for key in ("schema_version", "name", "expected_outcome"):
+        assert any(line.startswith(f"{key}:") for line in lines), (
+            f"{case.relative_to(ROOT)}: missing top-level {key}"
+        )
+
+
 def test_every_skill_dir_has_exact_skill_md():
     """A skill dir the budget tests would skip must be a known references-only dir."""
     for d in sorted(ROOT.glob("plugins/*/skills/*")):
