@@ -319,3 +319,29 @@ def test_pushes_and_opens_the_pr_once(env, tmp_path):
 def test_send_refuses_non_http_endpoint():
     with pytest.raises(ValueError):
         decide.send({}, "file:///etc/passwd")
+
+
+def test_accept_sets_up_worktree_before_filing(env, monkeypatch):
+    def boom(cfg):
+        raise decide.DecideError(1, "worktree setup failed")
+    monkeypatch.setattr(decide, "_worktree", boom)
+    assert env.cli(monkeypatch, RID, "accept") != 0
+    assert env.gh_calls("issue", "create") == []
+    assert env.rows() == []
+
+
+def test_gitleaks_ignores_inherited_config_env(monkeypatch):
+    monkeypatch.setenv("GITLEAKS_CONFIG", "/nonexistent/allow-all.toml")
+    monkeypatch.setenv("GITLEAKS_CONFIG_TOML", "[allowlist]")
+    seen = []
+
+    def fake_run(argv, cwd=None, env=None, **kw):
+        seen.append((argv, env))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(decide.subprocess, "run", fake_run)
+    with pytest.raises(decide.DecideError):  # the fake writes no report
+        decide._scan("hello")
+    argv, passed = next((a, e) for a, e in seen if a[0] == "gitleaks")
+    assert "GITLEAKS_CONFIG" not in passed
+    assert "GITLEAKS_CONFIG_TOML" not in passed

@@ -58,9 +58,11 @@ def _env() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if k not in _GIT_VARS}
 
 
-def _run(argv: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _run(argv: list[str], cwd: Path | None = None,
+         drop: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in _env().items() if k not in drop}
     try:
-        return subprocess.run(argv, cwd=cwd, env=_env(), capture_output=True, text=True,
+        return subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                               timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return subprocess.CompletedProcess(argv, 127, "", f"{argv[0]}: {type(exc).__name__}")
@@ -238,7 +240,7 @@ def _scan(body: str) -> None:
         proc = _run(["gitleaks", "dir", "--no-banner", "--no-color", "--redact",
                      "--report-format", "json", "--ignore-gitleaks-allow",
                      "--gitleaks-ignore-path", str(ignore), "--report-path", str(out),
-                     str(src)])
+                     str(src)], drop=("GITLEAKS_CONFIG", "GITLEAKS_CONFIG_TOML"))
         try:
             findings = json.loads(out.read_text())
         except (OSError, ValueError):
@@ -334,10 +336,11 @@ def decide(cfg: LearnConfig, rec_id: str, decision: Literal["accept", "defer", "
     cand = rec.candidate
     usage = next((s for s in rep.top if s.skill == cand.skill), None)
 
-    repo = url = None
+    repo = url = worktree = None
     note = reason
     if decision == "accept":
         repo, why = resolve_repo(cand.skill, cfg, usage.marketplace if usage else None)
+        worktree = _worktree(cfg)  # before filing: a setup failure must leave no orphan issue
         url = _file_issue(repo, rec, rec_id, rep.date)
         note = f"{reason}; {why}" if reason else why
     row = {"id": rec_id, "date": rep.date, "skill": cand.skill, "fingerprint": cand.fingerprint,
@@ -345,7 +348,8 @@ def decide(cfg: LearnConfig, rec_id: str, decision: Literal["accept", "defer", "
            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "signal": cand.signal, "metric": cand.metric, "value": cand.value}
 
-    worktree = _worktree(cfg)
+    if worktree is None:
+        worktree = _worktree(cfg)
     log = worktree / cfg.kb_dir / "decisions.jsonl"
     _append(log, row)
     _publish(worktree, rec_id, decision, log)
