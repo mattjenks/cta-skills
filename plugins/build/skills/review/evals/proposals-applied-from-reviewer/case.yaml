@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: proposals-applied-from-reviewer
+expected_outcome: |
+  The assistant applies the opus code reviewer's close or reopen answer to each proposed entry without judging it itself, records closed_by review and a reason on a closure, never uses accepted-risk, and leaves a doubtful or unanswered proposal unclosed.
+---
+tags: [review]
+max_turns: 6
+timeout_seconds: 300
+allowed_tools: [Read, Glob, Grep, Skill]
