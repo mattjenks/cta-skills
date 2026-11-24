@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -136,14 +137,32 @@ def _iso_ns(ns: int) -> str:
 KEEP_KEYS = {"event_name", "ts", "skill", "skill_short", "skill_name", "plugin_name",
              "marketplace_name", "server_name", "tool_name", "decision", "source", "outcome",
              "signals", "duration_ms", "turns", "start", "end", "session_id", "organization_id",
-             "invocation_trigger", "skill_source", "transport", "status", "success"}
+             "invocation_trigger", "skill_source", "transport", "status", "success", "command_word"}
+SAFE_WORD = re.compile(r"[A-Za-z0-9_.-]{1,40}")
+
+
+def _command_word(row: dict) -> str | None:
+    """First word of the command in `tool_parameters`, only if it is a plain word (S2)."""
+    params = row.get("tool_parameters")
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except ValueError:
+            return None
+    command = params.get("command") if isinstance(params, dict) else None
+    words = command.split() if isinstance(command, str) else []
+    return words[0] if words and SAFE_WORD.fullmatch(words[0]) else None
 
 
 def _clean_event(row: dict) -> dict:
     """Allow-listed fields only: no identity, prompt or raw log text reaches the Week."""
     out = {}
+    if row.get("event_name") == "tool_decision":
+        word = _command_word(row)
+        if word:
+            out["command_word"] = word
     for key, value in row.items():
-        if key in KEEP_KEYS:
+        if key in KEEP_KEYS and key != "command_word":
             out[key] = sanitize.name(value) if key in NAME_KEYS else sanitize.line(value)
     return out
 

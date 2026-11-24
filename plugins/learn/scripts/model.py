@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Literal
 
 
 @dataclass
@@ -46,3 +47,11 @@ class Candidate:
     sessions: int
     evidence: list[str]
     panel: str
+
+
+@dataclass
+class RotItem:
+    kind: Literal["broken", "stale", "permission"]
+    location: str
+    problem: str
+    fix: str

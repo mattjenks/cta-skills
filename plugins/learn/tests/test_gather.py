@@ -366,3 +366,26 @@ def test_tool_result_events_fetched_filtered_and_stripped(tmp_path, monkeypatch)
     blob = json.dumps(rows)
     for leaked in ("PARAMTEXT", "CMDTEXT", "a@example.test", "tool_parameters", "tool_input", "work:x"):
         assert leaked not in blob
+
+
+def test_tool_decision_keeps_safe_command_word_only(tmp_path, monkeypatch):
+    rows = [
+        {"tool_name": "Bash", "tool_parameters": json.dumps({"command": "gh pr view 12"})},
+        {"tool_name": "Bash", "tool_parameters": {"command": "  git   status"}},
+        {"tool_name": "Bash", "tool_parameters": json.dumps({"command": "$(evil) x"})},
+        {"tool_name": "Read", "tool_parameters": json.dumps({"file_path": "/secret/path"})},
+        {"tool_name": "Bash", "tool_parameters": "not json"},
+    ]
+
+    def loki(logql, start, end):
+        if "tool_decision" in logql:
+            return [{"event_name": "tool_decision", "organization_id": ORG, "ts": "1", **r}
+                    for r in rows]
+        return []
+
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 1.0)]), loki=loki)
+    week = gather.gather(_cfg(tmp_path), END)
+    events = week.events["tool_decision"]
+    assert [e.get("command_word") for e in events] == ["gh", "git", None, None, None]
+    blob = json.dumps(asdict(week), default=str)
+    assert "tool_parameters" not in blob and "/secret/path" not in blob and "evil" not in blob
