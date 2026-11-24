@@ -4,8 +4,10 @@
 # ///
 """The security findings record (`security.json`), the diff hash and status rules.
 
-Stdlib only. The assistant may write only ASSISTANT_STATUSES; MATT_ONLY statuses
-are closed by the owner and enforced by the finding-guard hook.
+Stdlib only. The builder writes only ASSISTANT_STATUSES. The independent reviewer in
+build:review closes a proposal as `false-positive` (REVIEWER_STATUSES), with `closed_by`
+`review` and a reason. `accepted-risk` was the owner's and survives only in old records.
+No hook enforces any of this; `secure.py verify` checks that a closure has a reason and a closer.
 """
 
 from __future__ import annotations
@@ -19,7 +21,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 ASSISTANT_STATUSES = {"open", "fixed", "proposed-false-positive"}
-MATT_ONLY = {"false-positive", "accepted-risk"}
+CLOSED = {"false-positive", "accepted-risk"}
+REVIEWER_STATUSES = {"false-positive"}
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 ENTRY_KEYS = (
@@ -73,7 +76,7 @@ def open_findings(record: Record) -> list[dict]:
 
 
 def unresolved(record: Record) -> list[dict]:
-    """Findings that still need the owner or a fix: open plus proposed-false-positive."""
+    """Findings that still need the reviewer or a fix: open plus proposed-false-positive."""
     return [f for f in record["findings"] if f.get("status") in ("open", "proposed-false-positive")]
 
 

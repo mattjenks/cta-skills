@@ -199,7 +199,7 @@ def _build_command(script):
 def test_build_hooks_json_commands_exist_and_run_through_uv():
     entries = list(_build_hook_entries())
     assert {e for e, _, _ in entries} == {"PreToolUse"}
-    assert {Path(h["command"]).name.rstrip('"') for _, _, h in entries} == {"gate_guard.py", "finding_guard.py"}
+    assert {Path(h["command"]).name.rstrip('"') for _, _, h in entries} == {"gate_guard.py"}
     for _, _, hook in entries:
         assert hook["command"].startswith("uv run --script "), hook["command"]
         match = re.search(r'"\$\{CLAUDE_PLUGIN_ROOT\}/([^"]+)"', hook["command"])
@@ -213,23 +213,7 @@ def test_build_hook_matchers_and_timeouts():
     by_script = {Path(h["command"]).name.rstrip('"'): (g["matcher"], h["timeout"])
                  for _, g, h in _build_hook_entries()}
     assert by_script["gate_guard.py"] == ("Bash|Write|Edit|MultiEdit", 15)
-    assert by_script["finding_guard.py"] == ("Write|Edit|MultiEdit|Bash", 15)
-
-
-def test_wired_finding_guard_blocks_and_allows():
-    command = _build_command("finding_guard.py")
-
-    def run(tool_name, tool_input):
-        return subprocess.run(command, shell=True, capture_output=True, text=True,
-                              input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}))
-
-    blocked = run("Write", {"file_path": "x/security.json",
-                            "content": json.dumps([{"status": "accepted-risk"}])})
-    assert blocked.returncode == 2, blocked.stderr
-    assert "only Matt closes findings" in blocked.stderr
-    allowed = run("Write", {"file_path": "x/security.json",
-                            "content": json.dumps([{"status": "proposed-false-positive"}])})
-    assert allowed.returncode == 0, allowed.stderr
+    assert "finding_guard.py" not in by_script
 
 
 def test_wired_gate_guard_refuses_hook_bypass_in_gated_repo(tmp_path):
