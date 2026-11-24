@@ -17,7 +17,7 @@ def _outcome(event: dict) -> bool | None:
 def evaluate(week: Week, skill: SkillUsage) -> Candidate | None:
     if "loki" in week.missing:
         return None
-    known = [_outcome(e) for e in week.events.get("tool_decision", [])
+    known = [_outcome(e) for e in week.events.get("tool_result", [])
              if e.get("skill_name") == skill.skill]
     known = [k for k in known if k is not None]
     if not known:

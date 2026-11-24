@@ -5,7 +5,7 @@ from __future__ import annotations
 from model import Candidate, SkillUsage, Week
 
 NAME = "cost_growth"
-PANEL = "Cost by skill"
+PANEL = "Cost by skill (USD, range)"
 THRESHOLD = 1.5
 MIN_COST_USD = 1.00
 

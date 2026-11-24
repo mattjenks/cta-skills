@@ -5,7 +5,7 @@ from __future__ import annotations
 from model import Candidate, SkillUsage, Week
 
 NAME = "drift"
-PANEL = "Skill drift"
+PANEL = "Drift signals (episodes with signals)"
 THRESHOLD = 0.30
 
 

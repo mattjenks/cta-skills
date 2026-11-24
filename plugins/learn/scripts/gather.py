@@ -28,7 +28,7 @@ from model import SkillUsage, Week
 
 KNOWN_MARKETPLACES = Path.home() / ".claude" / "plugins" / "known_marketplaces.json"
 SELECTOR = '{service_name="claude-code"}'
-EVENT_TYPES = ("tool_decision", "mcp_server_connection", "plugin_loaded")
+EVENT_TYPES = ("tool_decision", "tool_result", "mcp_server_connection", "plugin_loaded")
 NAME_KEYS = {"skill", "skill_short", "skill_name", "plugin_name", "marketplace_name",
              "server_name", "tool_name"}
 TIMEOUT = 10

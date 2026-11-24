@@ -27,7 +27,8 @@ class Week:
     skills: list[SkillUsage] = field(default_factory=list)
     episodes: list[dict] = field(default_factory=list)
     events: dict[str, list[dict]] = field(default_factory=lambda: {
-        "tool_decision": [], "mcp_server_connection": [], "plugin_loaded": []})
+        "tool_decision": [], "tool_result": [], "mcp_server_connection": [],
+        "plugin_loaded": []})
     freshness: dict[str, str | None] = field(default_factory=lambda: {
         "prometheus": None, "loki": None, "drift": None, "backup": None})
     missing: list[str] = field(default_factory=list)
