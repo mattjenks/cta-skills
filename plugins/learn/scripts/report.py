@@ -331,10 +331,11 @@ def main(argv: list[str] | None = None) -> int:
     reports = _reports_dir(cfg)
 
     if args.cmd == "draft":
-        r = build(cfg, when)
+        r, over = _build(cfg, when)
         reports.mkdir(parents=True, exist_ok=True)
         out = reports / f"{r.date}.json"
         out.write_text(to_json(r))
+        _backlog(reports.parent / "backlog.md", r.date, over)
         print(out)
         return 0
 
@@ -348,10 +349,16 @@ def main(argv: list[str] | None = None) -> int:
     if empty:
         print("empty prose fields: " + ", ".join(empty), file=sys.stderr)
         return 2
-    (reports / f"{r.date}.md").write_text(render_md(r))
-    (reports / f"{r.date}.html").write_text(render_html(r))
+    if r.date != when.isoformat():
+        print(f"date in {src.name} is not {when.isoformat()}", file=sys.stderr)
+        return 2
+    prefix = cfg.grafana_url.rstrip("/") + "/d/cta-skills"
+    r.links = {k: v for k, v in r.links.items() if isinstance(v, str) and v.startswith(prefix)}
+    name = when.isoformat()
+    (reports / f"{name}.md").write_text(render_md(r))
+    (reports / f"{name}.html").write_text(render_html(r))
     _update_index(reports, r)
-    print(reports / f"{r.date}.md")
+    print(reports / f"{name}.md")
     return 0
 
 
@@ -525,18 +532,41 @@ def _builds(cfg, week: Week) -> dict:
     return result
 
 
+def _backlog(path: Path, day: str, over: list[Candidate]) -> None:
+    """Append candidates past the cap, once each: a recurring one is not re-added weekly."""
+    if not over:
+        return
+    try:
+        text = path.read_text()
+    except OSError:
+        text = "# Backlog\n\n"
+    new = []
+    for c in over:
+        fp = _esc(c.fingerprint or c.skill, "md")
+        if fp in text or any(f"({fp})" in line for line in new):
+            continue
+        new.append(f"- {day} {_esc(c.skill, 'md')}: {_esc(c.signal, 'md')} ({fp})")
+    if new:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text.rstrip("\n") + "\n" + "\n".join(new) + "\n")
+
+
 def build(cfg: learn_config.LearnConfig, end: date) -> Report:
+    return _build(cfg, end)[0]
+
+
+def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candidate]]:
     week = gather.gather(cfg, end)
     reports = learn_config.learn_dir(cfg) / "reports" if cfg.kb else None
     decisions = reports.parent / "decisions.jsonl" if reports else Path("/nonexistent")
     top = candidates.top_skills(week)
-    cands, _over, cand_errors = candidates.select(week, cfg, decisions)
+    cands, over, cand_errors = candidates.select(week, cfg, decisions)
     items, totals, rot_errors = rot.run_rot(week, cfg)
 
     errors = list(week.errors) + list(cand_errors) + list(rot_errors)
     errors += [f"config: {n}" for n in cfg.notes]
     errors += [f"{src} unreachable" for src in week.missing]
-    problems = list(errors)
+    problems = [e for e in errors if not e.startswith("config: config renamed:")]
     if not cfg.exclude_organization_ids:
         errors.append(NO_EXCLUDE_NOTE)  # a note: it does not turn the status red
 
@@ -561,13 +591,14 @@ def build(cfg: learn_config.LearnConfig, end: date) -> Report:
 
     gap = "prometheus" in week.missing or not week.skills
     prevs = [s.prev_cost_usd for s in week.skills if s.prev_cost_usd is not None]
-    return Report(
+    report = Report(
         date=end.isoformat(), status=status, headline=headline, top=top,
         total_cost=None if gap else sum(s.cost_usd for s in week.skills),
         total_prev_cost=None if gap or not prevs else sum(prevs),
         recommendations=recs, followups=followups, builds=_builds(cfg, week), rot=items,
         rot_totals=totals, health=dict(week.freshness), errors=errors,
         links=_links(cfg, week, cands))
+    return report, over
 
 
 if __name__ == "__main__":

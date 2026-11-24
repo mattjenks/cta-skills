@@ -332,3 +332,63 @@ def test_draft_cli_writes_json(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out.strip() == str(path)
     data = json.loads(path.read_text())
     assert data["recommendations"][0]["why"] == ""
+
+
+# ------------------------------------------------------------------ fix round 1
+
+def test_render_rejects_tampered_date(tmp_path, capsys):
+    r = _report()
+    path = _write_draft(tmp_path, r)
+    path.write_text(path.read_text().replace('"2026-11-23"', '"../../x"', 1))
+    code = report.main(["render", "--date", "2026-11-23", "--config", str(_config(tmp_path))])
+    assert code == 2
+    assert "date" in capsys.readouterr().err
+    assert not (tmp_path / "learn" / "reports" / "2026-11-23.md").exists()
+    assert not (tmp_path / "x.md").exists() and not (tmp_path / "learn" / "x.md").exists()
+
+
+def _overflow(n):
+    return [Candidate(skill=f"skill{i}", signal="cost_growth", fingerprint=f"skill{i}|cost_growth",
+                      metric="cost_ratio", value=2.0, threshold=1.5, sessions=4, evidence=[],
+                      panel="p") for i in range(n)]
+
+
+def _draft(tmp_path, monkeypatch, over):
+    _stub(monkeypatch, _fresh_week([_skill()]))
+    monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], list(over), []))
+    return report.main(["draft", "--end", "2026-11-23", "--config", str(_config(tmp_path))])
+
+
+def test_draft_appends_overflow_to_backlog(tmp_path, monkeypatch):
+    assert _draft(tmp_path, monkeypatch, _overflow(2)) == 0
+    text = (tmp_path / "learn" / "backlog.md").read_text()
+    assert text.startswith("# Backlog")
+    assert "- 2026-11-23 skill0: cost\\_growth (skill0\\|cost\\_growth)" in text
+    assert "skill1" in text
+
+
+def test_backlog_overflow_not_duplicated(tmp_path, monkeypatch):
+    assert _draft(tmp_path, monkeypatch, _overflow(1)) == 0
+    assert _draft(tmp_path, monkeypatch, _overflow(2)) == 0
+    text = (tmp_path / "learn" / "backlog.md").read_text()
+    assert text.count("skill0") == 2  # skill and fingerprint of one line
+    assert text.count("skill1") == 2
+
+
+def test_render_drops_foreign_links(tmp_path):
+    r = _report(links={"grafana": "https://evil.example/phish",
+                       "panel:Cost by skill (USD, range)": "https://evil.example/p"},
+                top=[_skill()], total_cost=3.0, recommendations=[_rec(1)], status="amber")
+    path = _write_draft(tmp_path, r)
+    assert report.main(["render", "--date", "2026-11-23", "--config", str(_config(tmp_path))]) == 0
+    for ext in (".md", ".html"):
+        assert "evil.example" not in path.with_suffix(ext).read_text()
+
+
+def test_config_rename_note_not_red(tmp_path, monkeypatch):
+    _stub(monkeypatch, _fresh_week())
+    note = "config renamed: learn.organization_ids is ignored; use x"
+    r = report.build(_cfg(tmp_path, notes=(note,)), END)
+    assert f"config: {note}" in r.errors and r.status == "green"
+    bad = report.build(_cfg(tmp_path, notes=("config invalid: learn.kb_dir: bad",)), END)
+    assert bad.status == "red"
