@@ -429,7 +429,7 @@ def _delivery_errors(reports: Path, end: date, cfg: learn_config.LearnConfig | N
     """A Run errors line when the previous report fell back to a notification. Date only.
 
     The record is looked up in this reports folder, then in the previous date's report worktree
-    (its pull request may not be merged yet).
+    (its pull request may not be merged yet), then its delivery worktree.
     """
     prior = sorted((d for d in _index_dates(reports) if d < end.isoformat()), reverse=True)
     if not prior:
@@ -437,7 +437,8 @@ def _delivery_errors(reports: Path, end: date, cfg: learn_config.LearnConfig | N
     places = [reports]
     if cfg is not None:
         import decide  # deferred: decide imports this module
-        places.append(decide.WORKTREE_ROOT / f"learn-report-{prior[0]}" / cfg.kb_dir / "reports")
+        for name in (f"learn-report-{prior[0]}", f"learn-delivery-{prior[0]}"):
+            places.append(decide.WORKTREE_ROOT / name / cfg.kb_dir / "reports")
     row = None
     for place in places:
         try:

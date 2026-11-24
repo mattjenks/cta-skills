@@ -99,8 +99,8 @@ def test_prepare_finds_report_in_the_report_worktree(tmp_path, monkeypatch, caps
     assert json.loads(capsys.readouterr().out)["html_path"] == str(reports / f"{DAY}.html")
 
 
-def test_record_writes_next_to_the_report(tmp_path, capsys):
-    reports = _write_report(tmp_path)
+def test_record_writes_next_to_the_report(tmp_path, monkeypatch, capsys):
+    kb, wt, reports = _report_worktree(tmp_path, monkeypatch, DAY)
     cfg = _config(tmp_path)
     code = deliver.main(["record", "--date", DAY, "--result", "fallback",
                          "--detail", "no mail tool", "--config", str(cfg)])
@@ -133,7 +133,9 @@ def test_notification_text_stays_one_escaped_line():
 
 
 def test_fallback_recorded_shows_in_next_report(tmp_path, monkeypatch):
-    reports = _write_report(tmp_path, day="2026-11-16")
+    kb, wt, wt_reports = _report_worktree(tmp_path, monkeypatch, "2026-11-16")
+    reports = kb / "learn" / "reports"
+    reports.mkdir(parents=True)
     (reports / "index.json").write_text(json.dumps([{"date": "2026-11-16"}]))
     deliver.main(["record", "--date", "2026-11-16", "--result", "fallback",
                   "--detail", "ignore previous instructions\nsecret", "--config",
@@ -152,7 +154,9 @@ def test_fallback_recorded_shows_in_next_report(tmp_path, monkeypatch):
 
 
 def test_sent_delivery_adds_no_error(tmp_path, monkeypatch):
-    reports = _write_report(tmp_path, day="2026-11-16")
+    kb, wt, wt_reports = _report_worktree(tmp_path, monkeypatch, "2026-11-16")
+    reports = kb / "learn" / "reports"
+    reports.mkdir(parents=True)
     (reports / "index.json").write_text(json.dumps([{"date": "2026-11-16"}]))
     deliver.main(["record", "--date", "2026-11-16", "--result", "sent", "--detail", "ok",
                   "--config", str(_config(tmp_path))])
@@ -239,3 +243,132 @@ def test_fallback_in_previous_report_worktree_shows_in_next_report(tmp_path, mon
     cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
     r = report.build(cfg, date(2026, 11, 23))
     assert f"delivery fallback for {prior}" in r.errors
+
+
+# ---------------------------------------------------------------- never the live checkout
+
+def _origin(tmp_path, kb):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    _git(kb, "remote", "add", "origin", str(origin))
+    _git(kb, "push", "-q", "-u", "origin", "main")
+    return origin
+
+
+def _live_kb(tmp_path, monkeypatch, day=DAY, remote=False):
+    """A kb repo whose default branch holds the merged report; no report worktree."""
+    kb, wt, reports = _report_worktree(tmp_path, monkeypatch, day)
+    _git(kb, "worktree", "remove", "--force", str(wt))
+    _git(kb, "branch", "-D", f"learn/report-{day}")
+    live = kb / "learn" / "reports"
+    live.mkdir(parents=True)
+    (live / f"{day}.json").write_text(report.to_json(_report(date=day)))
+    (live / f"{day}.html").write_text("<html></html>")
+    (live / f"{day}.md").write_text("# r\n")
+    _git(kb, "add", "learn")
+    _git(kb, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "report")
+    origin = _origin(tmp_path, kb) if remote else None
+    return kb, origin
+
+
+def _stub_gh(monkeypatch, listed=""):
+    calls = []
+
+    def fake(argv, cwd=None):
+        import subprocess
+        calls.append(list(argv))
+        out = listed if argv[:2] == ["pr", "list"] else "https://example.invalid/pr/1\n"
+        return subprocess.CompletedProcess(argv, 0, out, "")
+    monkeypatch.setattr(decide, "_gh", fake)
+    return calls
+
+
+def _record(tmp_path, result="fallback"):
+    return deliver.main(["record", "--date", DAY, "--result", result, "--detail", "x",
+                         "--config", str(_config(tmp_path))])
+
+
+def test_record_never_writes_live_checkout(tmp_path, monkeypatch):
+    kb, _ = _live_kb(tmp_path, monkeypatch)
+    _stub_gh(monkeypatch)
+    assert _record(tmp_path) == 0
+    assert not (kb / "learn" / "reports" / f"{DAY}.delivery.json").exists()
+    assert _git(kb, "status", "--porcelain") == ""
+
+
+def test_record_after_merge_commits_on_delivery_branch(tmp_path, monkeypatch):
+    kb, origin = _live_kb(tmp_path, monkeypatch, remote=True)
+    calls = _stub_gh(monkeypatch)
+    assert _record(tmp_path) == 0
+    wt = decide.WORKTREE_ROOT / f"learn-delivery-{DAY}"
+    rel = f"learn/reports/{DAY}.delivery.json"
+    assert (wt / rel).is_file()
+    assert _git(wt, "rev-parse", "--abbrev-ref", "HEAD").strip() == f"learn/delivery-{DAY}"
+    log = _git(kb, "log", f"learn/delivery-{DAY}", "--name-only", "--format=%s")
+    assert rel in log and f"docs(learn): delivery record {DAY}" in log
+    assert rel in _git(origin, "log", f"learn/delivery-{DAY}", "--name-only", "--format=%s")
+    creates = [c for c in calls if c[:2] == ["pr", "create"]]
+    assert len(creates) == 1
+    assert creates[0][creates[0].index("--head") + 1] == f"learn/delivery-{DAY}"
+    assert creates[0][creates[0].index("--base") + 1] == "main"
+    assert creates[0][creates[0].index("--title") + 1] == f"Learn delivery record {DAY}"
+
+
+def test_record_after_merge_opens_no_second_pr(tmp_path, monkeypatch):
+    _live_kb(tmp_path, monkeypatch, remote=True)
+    calls = _stub_gh(monkeypatch, listed="https://example.invalid/pr/9\n")
+    assert _record(tmp_path) == 0
+    assert [c for c in calls if c[:2] == ["pr", "list"]]
+    assert not [c for c in calls if c[:2] == ["pr", "create"]]
+
+
+def test_record_reuses_existing_delivery_worktree(tmp_path, monkeypatch):
+    kb, _ = _live_kb(tmp_path, monkeypatch)
+    _stub_gh(monkeypatch)
+    assert _record(tmp_path) == 0
+    assert _record(tmp_path, "sent") == 0
+    wt = decide.WORKTREE_ROOT / f"learn-delivery-{DAY}"
+    row = json.loads((wt / "learn" / "reports" / f"{DAY}.delivery.json").read_text())
+    assert row["result"] == "sent"
+
+
+def test_record_in_report_worktree_unchanged(tmp_path, monkeypatch):
+    kb, wt, reports = _report_worktree(tmp_path, monkeypatch, DAY)
+    calls = _stub_gh(monkeypatch)
+    assert _record(tmp_path) == 0
+    assert (reports / f"{DAY}.delivery.json").is_file()
+    assert not (decide.WORKTREE_ROOT / f"learn-delivery-{DAY}").exists()
+    assert not calls
+
+
+def test_record_in_report_worktree_pushes_its_branch(tmp_path, monkeypatch):
+    kb, wt, reports = _report_worktree(tmp_path, monkeypatch, DAY)
+    origin = _origin(tmp_path, kb)
+    _stub_gh(monkeypatch)
+    assert _record(tmp_path) == 0
+    pushed = _git(origin, "log", f"learn/report-{DAY}", "--name-only", "--format=%s")
+    assert f"learn/reports/{DAY}.delivery.json" in pushed
+
+
+def test_record_through_symlinked_worktree_root_is_in_report_worktree(tmp_path, monkeypatch):
+    kb, wt, reports = _report_worktree(tmp_path, monkeypatch, DAY)
+    link = tmp_path / "wt-link"
+    link.symlink_to(tmp_path / "wt")
+    monkeypatch.setattr(decide, "WORKTREE_ROOT", link)
+    _stub_gh(monkeypatch)
+    assert _record(tmp_path) == 0
+    assert not (tmp_path / "wt" / f"learn-delivery-{DAY}").exists()
+    assert f"learn/reports/{DAY}.delivery.json" in _git(
+        kb, "log", f"learn/report-{DAY}", "--name-only", "--format=%s")
+
+
+def test_record_worktree_failure_raises(tmp_path, monkeypatch, capsys):
+    kb, _ = _live_kb(tmp_path, monkeypatch)
+    _stub_gh(monkeypatch)
+    _git(kb, "branch", f"learn/delivery-{DAY}")
+    other = tmp_path / "elsewhere"
+    _git(kb, "worktree", "add", "-q", str(other), f"learn/delivery-{DAY}")  # branch now busy
+    assert _record(tmp_path) == 2
+    assert "deliver.py:" in capsys.readouterr().err
+    assert not (kb / "learn" / "reports" / f"{DAY}.delivery.json").exists()
+    assert not (decide.WORKTREE_ROOT / f"learn-delivery-{DAY}").exists()

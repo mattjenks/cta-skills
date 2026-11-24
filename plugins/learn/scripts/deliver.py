@@ -86,16 +86,86 @@ def prepare(cfg: learn_config.LearnConfig, day: str) -> dict:
             "html_path": str(reports / f"{day}.html"), "md_path": str(reports / f"{day}.md")}
 
 
+def _within(path: Path, root: Path) -> bool:
+    return root.resolve() in path.resolve().parents
+
+
+def _delivery_worktree(cfg: learn_config.LearnConfig, day: str) -> Path:
+    """A kb worktree on `learn/delivery-<day>` cut from the default branch; reused when present."""
+    if cfg.kb is None:
+        raise DeliverError("kb is not configured")
+    kb = cfg.kb
+    path = decide.WORKTREE_ROOT / f"learn-delivery-{day}"
+    branch = f"learn/delivery-{day}"
+    if (path / ".git").exists():
+        return path
+    if decide._has_remote(kb):
+        decide._git(kb, "fetch", "--quiet")
+    exists = decide._git(kb, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise DeliverError(f"cannot create the delivery worktree: {type(exc).__name__}") from None
+    if exists.returncode == 0:
+        made = decide._git(kb, "worktree", "add", str(path), branch)
+    else:
+        made = decide._git(kb, "worktree", "add", "-b", branch, str(path),
+                           decide._default_branch(kb))
+    if made.returncode != 0:
+        raise DeliverError("cannot create the delivery worktree: " + sanitize.line(made.stderr))
+    return path
+
+
 def record(cfg: learn_config.LearnConfig, day: str, result: str, detail: str) -> Path:
+    """Write the delivery record; never into the live checkout.
+
+    Beside the report when that sits in the `learn-report-<day>` worktree, otherwise in a fresh
+    `learn-delivery-<day>` worktree on its own branch and pull request.
+    """
     reports = find_reports(cfg, day)
     if reports is None:
         raise DeliverError(f"no HTML report found for {day}")
     row = {"date": day, "result": result, "detail": sanitize.line(detail),
            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
-    path = reports / f"{day}.delivery.json"
+    report_wt = decide.WORKTREE_ROOT / f"learn-report-{day}"
+    if _within(reports, report_wt):
+        path = reports / f"{day}.delivery.json"
+        path.write_text(json.dumps(row, indent=2) + "\n")
+        _commit_record(path, day)
+        return path
+    wt = _delivery_worktree(cfg, day)
+    path = wt / cfg.kb_dir / "reports" / f"{day}.delivery.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(row, indent=2) + "\n")
-    _commit_record(path, day)
+    _publish_record(wt, path, day)
     return path
+
+
+def _publish_record(wt: Path, path: Path, day: str) -> None:
+    """Commit the record on `learn/delivery-<day>`, push it and open a PR. Failures warn."""
+    branch = f"learn/delivery-{day}"
+    rel = str(path.relative_to(wt))
+    decide._git(wt, "add", "--", rel)
+    done = decide._git(wt, "-c", "commit.gpgsign=false", "commit", "-q", "-m",
+                       f"docs(learn): delivery record {day}", "--only", "--", rel)
+    if done.returncode != 0:
+        _warn("could not commit the delivery record: " + sanitize.line(done.stderr or done.stdout))
+        return
+    if not decide._has_remote(wt):
+        return
+    pushed = decide._git(wt, "push", "--quiet", "-u", "origin", branch)
+    if pushed.returncode != 0:
+        _warn("git push failed: " + sanitize.line(pushed.stderr))
+        return
+    listed = decide._gh(["pr", "list", "--head", branch, "--state", "open", "--json", "url",
+                         "--jq", ".[0].url"], wt)
+    if listed.returncode == 0 and listed.stdout.strip():
+        return
+    made = decide._gh(["pr", "create", "--base", decide._default_branch(wt), "--head", branch,
+                       "--title", f"Learn delivery record {day}",
+                       "--body", "Delivery record for the weekly report."], wt)
+    if made.returncode != 0:
+        _warn("could not open the delivery PR: " + sanitize.line(made.stderr))
 
 
 def _warn(message: str) -> None:
@@ -110,13 +180,13 @@ def _commit_record(path: Path, day: str) -> None:
     """
     wt = decide.WORKTREE_ROOT / f"learn-report-{day}"
     branch = f"learn/report-{day}"
-    if wt not in path.parents:
+    if not _within(path, wt):
         return
     head = decide._git(wt, "rev-parse", "--abbrev-ref", "HEAD")
     if head.returncode != 0 or head.stdout.strip() != branch:
         _warn(f"{wt.name} is not on {branch}; the delivery record was not committed")
         return
-    rel = str(path.relative_to(wt))
+    rel = str(path.resolve().relative_to(wt.resolve()))
     steps = [("add", "--", rel),
              ("-c", "commit.gpgsign=false", "commit", "-q", "-m",
               f"docs(learn): delivery record {day}", "--", rel)]

@@ -56,7 +56,7 @@ uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" record --date <date> 
 
 `record` also commits the record file as `docs(learn): delivery record <date>` on the report's branch
 `learn/report-<date>` (never the default branch) and pushes it when a remote exists, so the next report
-can see it. A commit or push failure is only a warning; the record still stands.
+can see it. When the report has already merged, the record goes in a fresh `learn-delivery-<date>` worktree on `learn/delivery-<date>` with its own PR, never the live checkout. A commit, push or PR failure is only a warning; the record still stands.
 
 The next report lists a fallback under Run errors.
 

@@ -424,3 +424,21 @@ def test_config_rename_note_not_red(tmp_path, monkeypatch):
     assert f"config: {note}" in r.errors and r.status == "green"
     bad = report.build(_cfg(tmp_path, notes=("config invalid: learn.kb_dir: bad",)), END)
     assert bad.status == "red"
+
+
+def test_fallback_in_previous_delivery_worktree_shows_in_next_report(tmp_path, monkeypatch):
+    import decide
+    prior = "2026-11-16"
+    root = tmp_path / "wt"
+    monkeypatch.setattr(decide, "WORKTREE_ROOT", root)
+    reports = root / f"learn-delivery-{prior}" / "learn" / "reports"
+    reports.mkdir(parents=True)
+    (reports / f"{prior}.delivery.json").write_text(
+        json.dumps({"date": prior, "result": "fallback"}))
+    nxt = tmp_path / "kb" / "learn" / "reports"
+    nxt.mkdir(parents=True)
+    (nxt / "index.json").write_text(json.dumps([{"date": prior}]))
+    _stub(monkeypatch, _fresh_week())
+    cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
+    r = report.build(cfg, END)
+    assert f"delivery fallback for {prior}" in r.errors
