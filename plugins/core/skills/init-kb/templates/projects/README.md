@@ -19,7 +19,7 @@ Each `builds/<YYYY-MM-DD>-<topic>/` folder holds the record of one build run:
 | File | Purpose |
 |---|---|
 | `progress.md` | Where the run stands: steps done, in flight and blocked |
-| `security.json` | Security findings with a status for each: `open`, `fixed`, `proposed-false-positive`, `false-positive` or `accepted-risk`. Only the owner closes a finding as `false-positive` or `accepted-risk` |
+| `security.json` | Security findings with a status for each: `open`, `fixed`, `proposed-false-positive`, `false-positive` or `accepted-risk`. The builder only proposes a false positive; `/build:review` closes it as `false-positive` with a reason and `closed_by: review`. An accepted risk stays `open`, and the owner merges with it listed |
 | `retro.md` | What went well, what did not, and what to change next time |
 
 ## Conventions
