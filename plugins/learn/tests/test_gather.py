@@ -138,7 +138,8 @@ def test_work_events_dropped(tmp_path, monkeypatch):
     _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 1.0)]), loki=loki)
     week = gather.gather(_cfg(tmp_path), END)
     assert [e["tool_name"] for e in week.events["tool_decision"]] == ["Bash"]
-    assert set(week.events) == {"tool_decision", "mcp_server_connection", "plugin_loaded"}
+    assert set(week.events) == {"tool_decision", "tool_result", "mcp_server_connection",
+                                "plugin_loaded"}
     assert "work-tool" not in json.dumps(asdict(week), default=str)
     assert week.freshness["loki"] is not None
 
@@ -264,3 +265,24 @@ def test_prev_invocations_none_when_prior_week_has_no_rows(tmp_path, monkeypatch
     week = gather.gather(_cfg(tmp_path), END)
     assert week.skills[0].invocations == 1
     assert week.skills[0].prev_invocations is None
+
+
+def test_tool_result_events_fetched_filtered_and_stripped(tmp_path, monkeypatch):
+    def loki(logql, start, end):
+        if 'event_name="tool_result"' in logql:
+            return [{"event_name": "tool_result", "organization_id": ORG, "skill_name": "cta:kept",
+                     "success": "false", "tool_name": "Bash", "tool_parameters": "PARAMTEXT",
+                     "tool_input": "CMDTEXT", "user_email": "a@example.test",
+                     "ts": "1763900000000000000"},
+                    {"event_name": "tool_result", "organization_id": "org-b",
+                     "skill_name": "work:x", "success": "false", "ts": "1763900000000000001"}]
+        return []
+
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 1.0)]), loki=loki)
+    week = gather.gather(_cfg(tmp_path), END)
+    rows = week.events["tool_result"]
+    assert len(rows) == 1
+    assert rows[0]["skill_name"] == "cta:kept" and rows[0]["success"] == "false"
+    blob = json.dumps(rows)
+    for leaked in ("PARAMTEXT", "CMDTEXT", "a@example.test", "tool_parameters", "tool_input", "work:x"):
+        assert leaked not in blob

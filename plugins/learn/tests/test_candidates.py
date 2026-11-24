@@ -117,7 +117,7 @@ def test_candidates_only_for_top_five_skills(tmp_path):
 
 def test_failures_signal():
     ev = [{"skill_name": "cta:x", "success": "false"}] * 2 + [{"skill_name": "cta:x", "success": "true"}] * 8
-    week = _week([_skill("cta:x")], events={"tool_decision": ev})
+    week = _week([_skill("cta:x")], events={"tool_result": ev})
     from signals import failures
     cand = failures.evaluate(week, week.skills[0])
     assert cand and cand.value == 0.2 and cand.threshold == 0.10 and cand.signal == "failures"
@@ -141,7 +141,7 @@ def test_missing_source_is_not_a_measured_zero():
     assert cost_growth.evaluate(_week([s]), s) is None  # prev of zero: no ratio, not infinity
     s2 = _skill("cta:x")
     ev = [{"skill_name": "cta:x", "success": "false"}]
-    assert failures.evaluate(_week([s2], events={"tool_decision": ev}, missing=["loki"]), s2) is None
+    assert failures.evaluate(_week([s2], events={"tool_result": ev}, missing=["loki"]), s2) is None
     assert drift.evaluate(_week([s2], _eps("cta:x", 9, 10), missing=["loki"]), s2) is None
 
 
@@ -157,7 +157,7 @@ def test_evidence_lines_match_template(tmp_path):
     skills = [_skill(hostile, cost=5.0, prev_cost=1.0)]
     episodes = [{"skill": hostile, "signals": "<b>evil</b>", "outcome": "drifted\nx"}] * 4
     ev = [{"skill_name": hostile, "success": "false", "tool_name": "<img>"}] * 3
-    week = _week(skills, episodes, events={"tool_decision": ev})
+    week = _week(skills, episodes, events={"tool_result": ev})
     chosen, overflow, _ = candidates.select(week, CFG, tmp_path / "n")
     assert {c.signal for c in chosen + overflow} == {"drift", "failures", "cost_growth"}
     template = re.compile(r"(\d+ of \d+ (episodes|tool calls) [a-z ]+ \([\d.]+%\))"
@@ -218,3 +218,14 @@ def test_raising_signal_is_reported_not_fatal(tmp_path, monkeypatch):
     chosen, _, errors = candidates.select(week, CFG, tmp_path / "n")
     assert [c.signal for c in chosen] == ["drift"]
     assert any("broken" in e for e in errors)
+
+
+def test_every_signal_panel_is_a_dashboard_panel_title():
+    dash = Path(__file__).resolve().parents[3] / "telemetry" / "grafana" / "dashboards"
+    titles = set()
+    for f in dash.glob("*.json"):
+        titles |= {p.get("title") for p in json.loads(f.read_text()).get("panels", [])}
+    mods, _ = signals.discover()
+    assert mods
+    for mod in mods:
+        assert mod.PANEL in titles, (mod.NAME, mod.PANEL)
