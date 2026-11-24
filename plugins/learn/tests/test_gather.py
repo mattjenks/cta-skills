@@ -182,3 +182,22 @@ def test_personal_helper(tmp_path):
     assert gather.personal(cfg, ORG, "Corp/x") is False
     assert gather.personal(cfg, "org-b", None) is False
     assert gather.personal(cfg, None, None) is False
+
+
+def test_events_carry_no_identity_fields(tmp_path, monkeypatch):
+    def loki(logql, start, end):
+        row = {"organization_id": ORG, "user_email": "a@example.test", "user_id": "u1",
+               "user_account_uuid": "x", "prompt": "secret text", "line": "raw body",
+               "ts": "1763900000000000000"}
+        if "tool_decision" in logql:
+            return [{**row, "event_name": "tool_decision", "tool_name": "Bash"}]
+        if "cta.skill_episode" in logql:
+            return [{**row, "event_name": "cta.skill_episode", "skill": "cta:kept"}]
+        return []
+
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 1.0)]), loki=loki)
+    week = gather.gather(_cfg(tmp_path), END)
+    blob = json.dumps(asdict(week), default=str)
+    for leaked in ("a@example.test", "u1", "secret text", "raw body", "user_email"):
+        assert leaked not in blob
+    assert week.events["tool_decision"][0]["tool_name"] == "Bash"
