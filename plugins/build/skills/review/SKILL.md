@@ -40,8 +40,9 @@ and accepted gaps`, so it finds what matters and stops there. Model map: `../imp
 
 Dispatch one reviewer subagent on opus (model map: `../implement/references/models.md`) with the prompt in
 `references/final-review.md`, passing the package, the design (with its Accepted gaps), the plan for a
-Normal change, the open-items file, the check_skill output and `../secure/references/checklist.md` for the
-nine checks. It grades findings Critical, High, Medium or Low, says which fall inside an accepted gap, and
+Normal change, the open-items file, the check_skill output, `<folder>/security.json` (as `[FINDINGS_PATH]`, so it can
+answer `close` or `reopen` for each proposal) and `../secure/references/checklist.md` for the nine checks.
+It grades findings Critical, High, Medium or Low, says which fall inside an accepted gap, and
 writes no code. Add each security finding to `security.json` as `open` (`tool: checklist`).
 
 ## 3. Fix, at most two rounds
@@ -61,15 +62,16 @@ with `../implement/references/re-review-prompt.md`. CHANGES REQUESTED: one more 
 
 The review never stops the build. After the last round:
 
-1. Resolve the proposals. The builder never closes a finding; this review, which did not write the code,
-   does. For each `proposed-false-positive` in `security.json`, open the code and the recorded reasoning,
-   then either close it (`status: false-positive`, a non-empty `reason` in your own words, `closed_by:
-   "review"`) or send it back to `open` with why. Close only a finding you can show is not exploitable;
-   a doubtful one goes back to `open`. Set `false-positive` only, never `accepted-risk`: a real finding
-   nobody can fix stays `open` and goes to the PR. Edit each entry with Edit.
+1. Resolve the proposals. The builder never closes a finding; the code reviewer, who did not write the
+   code, decides, and you apply the reviewer's answer. Do not judge a proposal yourself. For each
+   `proposed-false-positive` in `security.json`: on `close`, set `status: false-positive`, `reason` to the
+   reviewer's reason and `closed_by: "review"`; on `reopen`, set it back to `open` with the reviewer's
+   reason. Set `false-positive` only, never `accepted-risk`: a real finding nobody can fix stays `open` and
+   goes to the PR. A proposal the reviewer did not answer stays as it is. Edit each entry with Edit.
 2. Rescan so the record matches the tree: `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/secure.py" scan
    --repo "$PWD" --base BASE --out <folder>/security.json`, then `secure.py verify` (as `/build:pr` runs it)
-   to confirm no proposal is left (exit 6 means one is).
+   to confirm no proposal is left. Exit 6 means one is: go back to step 1 and re-ask the reviewer for the
+   unanswered ones.
 3. Write `<folder>/pr-notes.md`: **Open findings** (every Critical or High still open, with file, line and
    what the rounds tried; the owner decides each before merge; plus every ledger `open at PR` line copied
    as is, an Important there counting as High, whatever the reviewer said of it) and **Known gaps** (the accepted gaps the

@@ -439,6 +439,16 @@ def test_review_closes_proposed_false_positives():
         ):
             assert re.search(pattern, body, re.I | re.S), f"{name}: missing /{pattern}/"
     has("review", r"builder never closes", r"secure\.py\" verify|secure\.py verify")
+    has(
+        "review",
+        r"<folder>/security\.json.{0,40}\[FINDINGS_PATH\]",
+        r"apply the reviewer's answer",
+        r"do not judge",
+        r"exit 6",
+    )
+    ref = (SKILLS / "review/references/final-review.md").read_text()
+    for pattern in (r"\[FINDINGS_PATH\]", r"`close`", r"`reopen`"):
+        assert re.search(pattern, ref), f"final-review: missing /{pattern}/"
 
 
 def test_no_finding_guard_prose_anywhere():

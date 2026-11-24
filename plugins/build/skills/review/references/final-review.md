@@ -11,7 +11,7 @@ You are doing the one code review of a whole branch in [REPO_PATH] before its PR
 Read [PACKAGE_PATH] (the full diff), [DESIGN_PATH] (with its Accepted gaps), [PLAN_PATH] if given (Global
 Constraints, Review Focus, Threat model and accepted gaps), [OPEN_ITEMS_PATH] (findings earlier rounds left
 open), [CHECK_SKILL_PATH] (skill budget output, may be empty) and [CHECKLIST_PATH] (the nine security
-checks) and [FINDINGS_PATH] (`security.json`). Open the changed files and the code they call; do not trust the ledger or any builder report.
+checks) and [FINDINGS_PATH] (`<folder>/security.json`). Open the changed files and the code they call; do not trust the ledger or any builder report.
 
 1. Spec: is every requirement met, with the exact names and values, and nothing extra built?
 2. Tests: do they prove the behavior (fail when it breaks), or only run?
@@ -40,9 +40,9 @@ End with `Verdict: APPROVED` (no Critical, no High) or `Verdict: CHANGES REQUEST
 
 ## After the review
 
-- Proposals: for every `proposed-false-positive` in `security.json` the review (not the builder) closes it as
-  `false-positive` with a non-empty `reason` and `closed_by: "review"`, or sends it back to `open` with why.
-  Never `accepted-risk`.
+- Proposals: the controller applies the reviewer's answer and does not judge. `close` becomes `false-positive`
+  with the reviewer's `reason` and `closed_by: "review"`; `reopen` becomes `open` with the reviewer's reason.
+  An unanswered proposal stays as it is. Never `accepted-risk`.
 - The fix rounds take Critical and High; a Medium only when its fix sits in code the round already touches.
 - Whatever is still open after two rounds goes to the PR's Open findings; the owner decides before merge.
 - Disagree with a finding? Put the evidence in the findings file; the re-reviewer rules on it.
