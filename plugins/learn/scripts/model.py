@@ -32,3 +32,16 @@ class Week:
         "prometheus": None, "loki": None, "drift": None, "backup": None})
     missing: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Candidate:
+    skill: str
+    signal: str
+    fingerprint: str
+    metric: str
+    value: float
+    threshold: float
+    sessions: int
+    evidence: list[str]
+    panel: str
