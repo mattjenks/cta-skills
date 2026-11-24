@@ -60,14 +60,14 @@ not stop for it.
    bump), is stated to the owner before it is made.
 
 A scanner finding that is a skipped or unscannable file (`scan.skipped-*`, `audit.not-audited:*`) is real
-until the owner closes it: it cannot be fixed by a test.
+until the review closes it: it cannot be fixed by a test.
 
 ## 4. Statuses
 
-The assistant may write `open`, `fixed` and `proposed-false-positive` only. Never write `false-positive` or
-`accepted-risk`: the owner closes a finding that way, with the reason in `reason` and their name in
-`closed_by`, and the finding-guard hook blocks any other writer (shell edits included). For a likely false
-positive set `proposed-false-positive` with the reason, then tell the owner which entries wait on them.
+The builder writes `open`, `fixed` and `proposed-false-positive` only. Never write `false-positive` or
+`accepted-risk`. For a likely false positive set `proposed-false-positive` with the reason in `reason`;
+the independent review in `/build:review` closes it (or reopens it), so the builder never closes its own
+finding. Accepted risk: a real finding that cannot be fixed stays `open` and goes to the PR for the owner.
 
 ## 5. Finish
 
@@ -78,8 +78,8 @@ The rescan keeps every entry's status with three rules: a finding found again th
 are never changed; entries the scan did not rediscover are left as they are and printed as "not
 rediscovered" (fixed ones are expected). A `security.json` that is not valid JSON stops the script (exit 2):
 tell the owner, do not overwrite it.
-Report: counts by status, the fixes with their commits, every entry waiting on the owner (`open`,
-`proposed-false-positive`) and any "not rediscovered" entries. Commit and push `security.json` in the
+Report: counts by status, the fixes with their commits, every entry still waiting (`open` for the owner,
+`proposed-false-positive` for the review) and any "not rediscovered" entries. Commit and push `security.json` in the
 knowledge-base worktree (`docs(<slug>): security pass`). Never push to the default branch.
 
 ## Resources

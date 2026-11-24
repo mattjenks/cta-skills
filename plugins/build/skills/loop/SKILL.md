@@ -43,8 +43,8 @@ Announce each step as it starts ("Step 3 of 9: implement") and each stop as it i
 6. `/build:secure` (scanners). A scanner that is missing or failed is a stop.
 7. `/build:review`: the one code review on the most capable model, spec, quality and security, at most two
    fix rounds.
-8. `/build:pr`. Open findings, proposed false positives and known gaps go in the PR; the owner decides
-   before merge.
+8. `/build:pr`. Open findings, the review's closures and known gaps go in the PR; the owner decides
+   before merge. No extra stop.
 9. `/build:retro`.
 
 Size decides the reviews: a small change gets the one code review (step 7); a normal change gets the

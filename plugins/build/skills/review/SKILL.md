@@ -61,13 +61,20 @@ with `../implement/references/re-review-prompt.md`. CHANGES REQUESTED: one more 
 
 The review never stops the build. After the last round:
 
-1. Rescan so the record matches the tree: `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/secure.py" scan
-   --repo "$PWD" --base BASE --out <folder>/security.json`.
-2. Write `<folder>/pr-notes.md`: **Open findings** (every Critical or High still open, with file, line and
+1. Resolve the proposals. The builder never closes a finding; this review, which did not write the code,
+   does. For each `proposed-false-positive` in `security.json`, open the code and the recorded reasoning,
+   then either close it (`status: false-positive`, a non-empty `reason` in your own words, `closed_by:
+   "review"`) or send it back to `open` with why. Close only a finding you can show is not exploitable;
+   a doubtful one goes back to `open`. Set `false-positive` only, never `accepted-risk`: a real finding
+   nobody can fix stays `open` and goes to the PR. Edit each entry with Edit.
+2. Rescan so the record matches the tree: `uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/secure.py" scan
+   --repo "$PWD" --base BASE --out <folder>/security.json`, then `secure.py verify` (as `/build:pr` runs it)
+   to confirm no proposal is left (exit 6 means one is).
+3. Write `<folder>/pr-notes.md`: **Open findings** (every Critical or High still open, with file, line and
    what the rounds tried; the owner decides each before merge; plus every ledger `open at PR` line copied
    as is, an Important there counting as High, whatever the reviewer said of it) and **Known gaps** (the accepted gaps the
    review confirmed, one line each). Mediums and Lows not fixed are dropped, never filed for later.
-3. Push the code branch, record the verdict in the ledger, and say the branch is ready for `/build:pr`.
+4. Push the code branch, record the verdict in the ledger, and say the branch is ready for `/build:pr`.
 
 ## Resources
 

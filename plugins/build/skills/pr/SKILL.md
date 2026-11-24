@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Opens the pull requests for a finished build - checks that security.json matches the branch head, lists open findings, proposed false positives and known gaps in the PR for the owner to decide before merge, pushes the code and knowledge-base branches and opens both PRs linked to each other. Use after /build:review, or when asked to "open the PRs" or "ship it".
+description: Opens the pull requests for a finished build - checks that security.json matches the branch head, lists the reviewer's closures, open findings and known gaps in the PR for the owner to decide before merge, pushes the code and knowledge-base branches and opens both PRs linked to each other. Use after /build:review, or when asked to "open the PRs" or "ship it".
 argument-hint: "[base-branch]"
 ---
 
@@ -26,24 +26,23 @@ It never writes. Exit codes:
 - 4: the record is missing or its `diff_hash` does not match the branch head. Rescan with `secure.py scan`
   (as `/build:review` section 4 does) and verify again. Never open a PR on a record for a different tree.
 - 5: findings are still `open`. Do not stop: each goes into the PR's **Open findings** (section 2).
-- 6: `proposed-false-positive` entries wait on the owner. Do not stop: they go into the PR (section 2).
+- 6: `proposed-false-positive` entries are still unresolved: the review step did not close them. Go back
+  to `/build:review` to resolve them, then rescan and verify again. Do not hand them to the owner.
 - 0: continue.
 
-## 2. Findings for the owner, in the PR
+## 2. Findings and closures, in the PR
 
-The build does not stop for findings; the owner decides at the PR, before merge. Only the owner closes a
-finding as `false-positive` or `accepted-risk`, and the finding-guard hook blocks every other writer.
-Never write `false-positive` or `accepted-risk` yourself, by any route.
+The build does not stop for findings; the owner decides at the PR, before merge. The independent review
+closes false positives; this skill never writes `false-positive` or `accepted-risk`, by any route.
 
 1. Build the PR body's **Open findings** from `<folder>/pr-notes.md` (from `/build:review`) plus every
-   entry `verify` named on exit 5 (an `open` status, an unknown status, or an owner closure missing
-   `closed_by`): `id`, severity, `path:line`, the message, what was tried or what is missing.
-2. List every `proposed-false-positive` entry there too, the whole batch at once, with your recorded
-   reasoning and the exact edit the owner applies to `<folder>/security.json` themselves before merging:
-   per `id`, set `status`, `reason` (their words) and `closed_by` (their name). Say the hook blocks the
-   assistant from making it.
-3. If the owner answers in the session, record their answers verbatim in `<folder>/closures.md` (one
-   section per `id`) and commit it; after they apply the edit, re-verify with the same `verify` command.
+   entry `verify` named on exit 5 (an `open` status, an unknown status, or a closure missing `reason` or
+   `closed_by`): `id`, severity, `path:line`, the message, what was tried or what is missing. Accepted
+   risk is the owner merging with the finding listed there.
+2. List every reviewer closure under **Closed by review**: `id`, severity, `path:line`, the
+   `reason` and `closed_by`, so the owner can overrule any of them before merge.
+3. If the owner gives words in the session (an overrule or an accepted risk), record them verbatim in
+   `<folder>/closures.md` (one section per `id`) and commit it.
 4. Add the **Known gaps** from `pr-notes.md`.
 
 ## 3. Push
@@ -57,7 +56,7 @@ Never write `false-positive` or `accepted-risk` yourself, by any route.
 ## 4. Open both PRs
 
 1. Code PR: `gh pr create --base BASE --head <branch> --title "<conventional title>" --body-file <body>`. The
-   body gives the why, the changes, the validation and security result, the Open findings and Known gaps
+   body gives the why, the changes, the validation and security result, the Open findings, closures and Known gaps
    (section 2), and a link to the design.
 2. Knowledge-base PR: `gh pr create` in the worktree against the knowledge base's default branch, titled
    `docs(<slug>): <topic> build record`.

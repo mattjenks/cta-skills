@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: reviewer-closes-false-positives
+expected_outcome: |
+  Sends unresolved proposals back to the review step; never closes them itself and does not hand them to the owner.
