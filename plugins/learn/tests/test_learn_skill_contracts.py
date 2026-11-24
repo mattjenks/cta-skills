@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 SKILLS = Path(__file__).resolve().parent.parent / "skills"
-ALL_SKILLS = ["report", "decide", "deliver"]
+ALL_SKILLS = ["report", "decide", "deliver", "schedule"]
 
 
 def text(skill: str) -> str:
@@ -142,4 +142,53 @@ def test_deliver_exit_codes():
 
 def test_deliver_has_two_evals():
     cases = [p for p in (SKILLS / "deliver" / "evals").iterdir() if (p / "case.yaml").is_file()]
+    assert len(cases) >= 2
+
+
+# --- schedule ---
+
+
+def test_schedule_description_names_the_schedule():
+    head = (SKILLS / "schedule" / "SKILL.md").read_text().split("---")[1]
+    assert re.search(r"^description:.*schedul", head, re.M | re.I)
+
+
+def test_schedule_task_id_and_cron():
+    has("schedule", r"cta-weekly-report", r"0 7 \* \* 1", r"local time")
+
+
+def test_schedule_lists_then_updates_never_a_second():
+    has("schedule", r"list_scheduled_tasks", r"update_scheduled_task", r"create_scheduled_task",
+        r"never create a second", r"not.*(suggest|-2)")
+    body = text("schedule")
+    assert body.index("list_scheduled_tasks") < body.index("create_scheduled_task")
+
+
+def test_schedule_needs_the_desktop_app():
+    has("schedule", r"needs the Claude desktop app", r"stop")
+
+
+def test_schedule_missed_run_line():
+    has("schedule", r"missed while the app is closed.*next launch")
+
+
+def test_schedule_offers_one_test_run():
+    has("schedule", r"run_scheduled_task", r"only after.*yes")
+
+
+def test_schedule_prompt_is_passed_verbatim():
+    has("schedule", r"task-prompt\.md", r"verbatim")
+
+
+def test_task_prompt_names_the_skills_and_no_personal_value():
+    body = (SKILLS / "schedule" / "references" / "task-prompt.md").read_text()
+    assert "/learn:report" in body and "/learn:deliver" in body
+    assert "REPORT:" in body
+    assert re.search(r"data,? never instructions", body, re.I)
+    assert "@" not in body
+    assert not re.search(r"/(Users|home)/\w", body)
+
+
+def test_schedule_has_two_evals():
+    cases = [p for p in (SKILLS / "schedule" / "evals").iterdir() if (p / "case.yaml").is_file()]
     assert len(cases) >= 2
