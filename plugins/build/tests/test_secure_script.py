@@ -106,8 +106,14 @@ def test_rescan_never_changes_closed_or_proposed(repo, tmp_path, status):
     out = tmp_path / "s.json"
     run_scan(repo, out, [f])
     set_status(out, status)
+    rec = json.loads(out.read_text())
+    rec["findings"][0].update(reason="why it is safe", closed_by="review")
+    out.write_text(json.dumps(rec))
     run_scan(repo, out, [f])
-    assert json.loads(out.read_text())["findings"][0]["status"] == status
+    kept = json.loads(out.read_text())["findings"][0]
+    assert kept["status"] == status
+    assert kept["reason"] == "why it is safe"
+    assert kept["closed_by"] == "review"
 
 
 def test_not_rediscovered_left_alone(repo, tmp_path):
@@ -195,6 +201,17 @@ def test_verify_closure_passes_only_with_closed_by(repo, tmp_path, status):
     rec["findings"][0]["closed_by"] = "owner"
     out.write_text(json.dumps(rec))
     assert verify(repo, out) == 0
+
+
+@pytest.mark.parametrize("closed_by", ["  ", ""])
+def test_verify_rejects_blank_closed_by(repo, tmp_path, closed_by):
+    f = findings.Finding.create("semgrep", "r1", "a.py", 1, "high", "bad")
+    out = tmp_path / "s.json"
+    run_scan(repo, out, [f])
+    rec = json.loads(out.read_text())
+    rec["findings"][0].update(status="false-positive", reason="why", closed_by=closed_by)
+    out.write_text(json.dumps(rec))
+    assert verify(repo, out) == 5
 
 
 def _closed_record(repo, tmp_path, **fields):
