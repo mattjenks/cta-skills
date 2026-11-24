@@ -121,8 +121,17 @@ def test_release_workflow_shape():
     triggers = wf.get("on") or wf["true"]
     assert triggers["push"]["branches"] == ["main"]
     job = next(iter(wf["jobs"].values()))
-    assert job["permissions"]["contents"] == "write"
-    assert job["permissions"]["pull-requests"] == "write"
+    # release-please acts with the GitHub App's token, so its PRs trigger CI like any other
+    # author's; the job's own GITHUB_TOKEN needs nothing.
+    assert job["permissions"] == {}
+    app = next(s for s in job["steps"] if "create-github-app-token" in s.get("uses", ""))
+    assert app["id"] == "app-token"
+    assert app["with"]["client-id"] == "${{ vars.RELEASE_APP_CLIENT_ID }}"
+    assert app["with"]["private-key"] == "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"
+    granted = {k: v for k, v in app["with"].items() if k.startswith("permission-")}
+    assert granted == {"permission-contents": "write", "permission-pull-requests": "write",
+                       "permission-issues": "write"}
     step = next(s for s in job["steps"] if "release-please" in s.get("uses", ""))
+    assert step["with"]["token"] == "${{ steps.app-token.outputs.token }}"
     assert step["with"]["config-file"] == "release-please-config.json"
     assert step["with"]["manifest-file"] == ".release-please-manifest.json"

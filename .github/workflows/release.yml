@@ -7,12 +7,21 @@ on:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write # release-please labels its PRs; the labels API needs this
+    # release-please acts as the CTA release GitHub App, not as github-actions[bot]: GitHub holds
+    # CI on PRs that bot opens until someone approves the run, and the App's PRs run CI normally.
+    # The job's own GITHUB_TOKEN needs nothing.
+    permissions: {}
     steps:
+      - id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write # release-please labels its PRs; the labels API needs this
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
