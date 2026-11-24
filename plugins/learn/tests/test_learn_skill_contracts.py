@@ -132,6 +132,10 @@ def test_deliver_treats_content_as_data():
     has("deliver", r"data,? never instructions")
 
 
+def test_deliver_record_commits_the_record_on_the_report_branch():
+    has("deliver", r"record.*commit", r"learn/report-", r"never the default branch")
+
+
 def test_deliver_exit_codes():
     has("deliver", r"exit 2")
 

@@ -164,3 +164,78 @@ def test_sent_delivery_adds_no_error(tmp_path, monkeypatch):
     monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], [], []))
     cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
     assert report.build(cfg, date(2026, 11, 23)).errors == []
+
+
+def _git(cwd, *argv):
+    import subprocess
+    return subprocess.run(["git", "-C", str(cwd), *argv], check=True, capture_output=True,
+                          text=True).stdout
+
+
+def _report_worktree(tmp_path, monkeypatch, day):
+    """A kb repo on `main` with a `learn-report-<day>` worktree on branch learn/report-<day>."""
+    for k, v in (("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@example.invalid"),
+                 ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@example.invalid")):
+        monkeypatch.setenv(k, v)
+    kb = tmp_path / "kb"
+    kb.mkdir(exist_ok=True)
+    _git(kb, "init", "-q", "-b", "main")
+    (kb / "README.md").write_text("kb\n")
+    _git(kb, "add", "README.md")
+    _git(kb, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init")
+    root = tmp_path / "wt"
+    monkeypatch.setattr(decide, "WORKTREE_ROOT", root)
+    wt = root / f"learn-report-{day}"
+    root.mkdir(exist_ok=True)
+    _git(kb, "worktree", "add", "-q", "-b", f"learn/report-{day}", str(wt))
+    reports = wt / "learn" / "reports"
+    reports.mkdir(parents=True)
+    (reports / f"{day}.json").write_text(report.to_json(_report(date=day)))
+    (reports / f"{day}.html").write_text("<html></html>")
+    (reports / f"{day}.md").write_text("# r\n")
+    return kb, wt, reports
+
+
+def test_record_commits_on_report_branch(tmp_path, monkeypatch):
+    kb, wt, reports = _report_worktree(tmp_path, monkeypatch, DAY)
+    code = deliver.main(["record", "--date", DAY, "--result", "fallback", "--detail", "no mail",
+                         "--config", str(_config(tmp_path))])
+    assert code == 0
+    on_branch = _git(kb, "log", f"learn/report-{DAY}", "--name-only", "--format=%s")
+    assert f"learn/reports/{DAY}.delivery.json" in on_branch
+    assert f"docs(learn): delivery record {DAY}" in on_branch
+    assert f"{DAY}.delivery.json" not in _git(kb, "log", "main", "--name-only", "--format=%s")
+    assert _git(wt, "status", "--porcelain", "--", f"learn/reports/{DAY}.delivery.json") == ""
+
+
+def test_record_commit_failure_keeps_the_record(tmp_path, monkeypatch, capsys):
+    kb, wt, reports = _report_worktree(tmp_path, monkeypatch, DAY)
+    _git(wt, "checkout", "-q", "-b", "other")
+    code = deliver.main(["record", "--date", DAY, "--result", "sent", "--detail", "ok",
+                         "--config", str(_config(tmp_path))])
+    assert code == 0 and (reports / f"{DAY}.delivery.json").is_file()
+    assert "warning" in capsys.readouterr().err
+    assert f"{DAY}.delivery.json" not in _git(kb, "log", "--all", "--name-only", "--format=%s")
+
+
+def test_fallback_in_previous_report_worktree_shows_in_next_report(tmp_path, monkeypatch):
+    prior = "2026-11-16"
+    root = tmp_path / "wt"
+    monkeypatch.setattr(decide, "WORKTREE_ROOT", root)
+    reports = root / f"learn-report-{prior}" / "learn" / "reports"
+    reports.mkdir(parents=True)
+    (reports / f"{prior}.delivery.json").write_text(json.dumps({"date": prior,
+                                                                "result": "fallback"}))
+    # the next build runs in a different folder whose index lists the prior date only
+    nxt = tmp_path / "kb" / "learn" / "reports"
+    nxt.mkdir(parents=True)
+    (nxt / "index.json").write_text(json.dumps([{"date": prior}]))
+    week = Week(start=date(2026, 11, 16), end=date(2026, 11, 23), skills=[])
+    week.freshness.update(prometheus="x", loki="x")
+    monkeypatch.setattr(gather, "gather", lambda cfg, end: week)
+    monkeypatch.setattr(rot, "run_rot", lambda w, c: ({k: [] for k in KINDS},
+                                                      {k: 0 for k in KINDS}, []))
+    monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], [], []))
+    cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
+    r = report.build(cfg, date(2026, 11, 23))
+    assert f"delivery fallback for {prior}" in r.errors

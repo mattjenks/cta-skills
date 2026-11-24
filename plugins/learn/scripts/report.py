@@ -425,15 +425,26 @@ def _previous_report(reports: Path, end: date) -> Report | None:
     return None
 
 
-def _delivery_errors(reports: Path, end: date) -> list[str]:
-    """A Run errors line when the previous report fell back to a notification. Date only."""
+def _delivery_errors(reports: Path, end: date, cfg: learn_config.LearnConfig | None = None) -> list[str]:
+    """A Run errors line when the previous report fell back to a notification. Date only.
+
+    The record is looked up in this reports folder, then in the previous date's report worktree
+    (its pull request may not be merged yet).
+    """
     prior = sorted((d for d in _index_dates(reports) if d < end.isoformat()), reverse=True)
     if not prior:
         return []
-    try:
-        row = json.loads((reports / f"{prior[0]}.delivery.json").read_text())
-    except (OSError, ValueError):
-        return []
+    places = [reports]
+    if cfg is not None:
+        import decide  # deferred: decide imports this module
+        places.append(decide.WORKTREE_ROOT / f"learn-report-{prior[0]}" / cfg.kb_dir / "reports")
+    row = None
+    for place in places:
+        try:
+            row = json.loads((place / f"{prior[0]}.delivery.json").read_text())
+            break
+        except (OSError, ValueError):
+            continue
     if isinstance(row, dict) and row.get("result") == "fallback":
         return [f"delivery fallback for {prior[0]}"]
     return []
@@ -588,7 +599,7 @@ def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candi
     errors += [f"config: {n}" for n in cfg.notes]
     errors += [f"{src} unreachable" for src in week.missing]
     if reports:
-        errors += _delivery_errors(reports, end)
+        errors += _delivery_errors(reports, end, cfg)
     problems = [e for e in errors if not e.startswith("config: config renamed:")]
     if not cfg.exclude_organization_ids:
         errors.append(NO_EXCLUDE_NOTE)  # a note: it does not turn the status red

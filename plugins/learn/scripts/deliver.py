@@ -94,7 +94,41 @@ def record(cfg: learn_config.LearnConfig, day: str, result: str, detail: str) ->
            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     path = reports / f"{day}.delivery.json"
     path.write_text(json.dumps(row, indent=2) + "\n")
+    _commit_record(path, day)
     return path
+
+
+def _warn(message: str) -> None:
+    print(f"deliver.py: warning: {message}", file=sys.stderr)
+
+
+def _commit_record(path: Path, day: str) -> None:
+    """Commit (and push, when a remote exists) the record on the report's branch.
+
+    Only when the file sits in the `learn-report-<day>` worktree on `learn/report-<day>`; never
+    the default branch. A failure is a warning: the record still stands.
+    """
+    wt = decide.WORKTREE_ROOT / f"learn-report-{day}"
+    branch = f"learn/report-{day}"
+    if wt not in path.parents:
+        return
+    head = decide._git(wt, "rev-parse", "--abbrev-ref", "HEAD")
+    if head.returncode != 0 or head.stdout.strip() != branch:
+        _warn(f"{wt.name} is not on {branch}; the delivery record was not committed")
+        return
+    rel = str(path.relative_to(wt))
+    steps = [("add", "--", rel),
+             ("-c", "commit.gpgsign=false", "commit", "-q", "-m",
+              f"docs(learn): delivery record {day}", "--", rel)]
+    for step in steps:
+        out = decide._git(wt, *step)
+        if out.returncode != 0:
+            _warn(f"git {step[0]} failed: {sanitize.line(out.stderr)}")
+            return
+    if decide._has_remote(wt):
+        out = decide._git(wt, "push", "--quiet", "origin", branch)
+        if out.returncode != 0:
+            _warn(f"git push failed: {sanitize.line(out.stderr)}")
 
 
 def _escape(text: str) -> str:

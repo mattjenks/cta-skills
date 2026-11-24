@@ -24,7 +24,7 @@ Take the date from the `REPORT: <path>` line that `learn:report` printed (the fi
 uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" prepare --date <date>
 ```
 
-It prints JSON with `to`, `subject`, `html_path` and `md_path`. exit 2 means there is no recipient in the
+It prints JSON with `to`, `subject`, `html_path` and `md_path`. Exit 2 means there is no recipient in the
 CTA config (`delivery.to` in the `[learn]` section) or the HTML file is missing: tell the owner which one
 and stop. Do not guess an address and do not build one.
 
@@ -53,6 +53,10 @@ No tool that can send email, or the send failed: raise the notification, then re
 uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" notify --date <date>
 uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" record --date <date> --result fallback --detail "<one short reason>"
 ```
+
+`record` also commits the record file as `docs(learn): delivery record <date>` on the report's branch
+`learn/report-<date>` (never the default branch) and pushes it when a remote exists, so the next report
+can see it. A commit or push failure is only a warning; the record still stands.
 
 The next report lists a fallback under Run errors.
 
