@@ -1,0 +1,1 @@
+Set up the weekly report schedule. You can't call tools here, so take it as given that the scheduled-tasks tools are loaded and that the task list already contains cta-weekly-report. Tell me which tool calls you make, in what order, and what you say to me at the end.

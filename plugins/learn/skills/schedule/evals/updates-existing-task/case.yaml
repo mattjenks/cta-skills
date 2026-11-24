@@ -2,11 +2,3 @@ schema_version: "1.1"
 name: updates-existing-task
 expected_outcome: |
   The skill lists the tasks first, finds cta-weekly-report and updates it instead of creating a second, then tells the owner about missed runs and offers a test run without running one unasked.
----
-tags: [schedule]
-max_turns: 8
-timeout_seconds: 600
-allowed_tools: [Read, Glob, Grep, Skill]
----
-
-Set up the weekly report schedule. You can't call tools here, so take it as given that the scheduled-tasks tools are loaded and that the task list already contains cta-weekly-report. Tell me which tool calls you make, in what order, and what you say to me at the end.

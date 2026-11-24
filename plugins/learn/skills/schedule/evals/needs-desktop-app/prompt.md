@@ -1,0 +1,1 @@
+Set up the weekly report schedule. You can't call tools here, so take it as given that no scheduled-tasks tools are loaded and none are in the deferred tool list. Tell me what you do and what you say to me.
