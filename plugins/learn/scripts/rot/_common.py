@@ -14,7 +14,7 @@ _OWNER = re.compile(r"[:/]([^/:]+)/[^/:]+?(?:\.git)?/?$")
 
 def item(kind: str, location: str, problem: str, fix: str) -> RotItem:
     """A RotItem whose text is inert; callers pass external strings through `sanitize.path`."""
-    return RotItem(kind, sanitize.line(location), sanitize.line(problem), sanitize.line(fix))
+    return RotItem(kind, sanitize.line(location, keep="()"), sanitize.line(problem), sanitize.line(fix, keep="()"))
 
 
 def origin_owner(repo: Path) -> str | None:

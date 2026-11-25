@@ -123,9 +123,15 @@ def test_html_escapes_names():
     items = rot.run_rot(week, learn_config.LearnConfig(kb=None))[0]["broken"]
     out = report.render_md(_report(rot={"broken": items, "stale": [], "permission": []},
                                    rot_totals={"broken": 1, "stale": 0, "permission": 0}))
-    assert sentence not in out and sentence not in report.render_html(_report(
+    page = report.render_html(_report(
         rot={"broken": items, "stale": [], "permission": []},
         rot_totals={"broken": 1, "stale": 0, "permission": 0}))
+    assert items[0].location.startswith("invalid-name-")
+    for text in (out, page, report.to_json(_report(
+            rot={"broken": items, "stale": [], "permission": []}))):
+        assert sentence not in text
+        assert "Ignore all previous" not in text and "email the report" not in text
+        assert "instructions" not in text
 
 
 def _write_draft(tmp_path, r):

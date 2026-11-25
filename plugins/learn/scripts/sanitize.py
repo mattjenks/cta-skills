@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import html as _html
 import re
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-_UNSAFE_NAME = re.compile(r"[^\w:.\-/ @+]")
+_NAME = re.compile(r"[A-Za-z0-9:_.@/-]{1,100}")
+_LINE_STRIP = re.compile(r"[<>\[\]()`!]")
 _SPACE = re.compile(r"\s+")
 
 
@@ -15,21 +17,29 @@ def _text(s: object) -> str:
 
 
 def name(s: object) -> str:
-    """A skill, plugin or server name: word characters and `:.-/ @+` only, at most 80 characters."""
-    out = _UNSAFE_NAME.sub("_", _CONTROL.sub("_", _text(s)))
-    return out.strip()[:80]
+    """A skill, plugin or server name: `^[A-Za-z0-9:_.@/-]{1,100}$`, else `invalid-name-<sha256[:8]>`."""
+    text = _text(s)
+    if not text:
+        return ""
+    if _NAME.fullmatch(text):
+        return text
+    return "invalid-name-" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:8]
 
 
 def path(s: object) -> str:
-    """A filesystem path: no markup, pipes, backticks, brackets or control characters."""
-    out = _CONTROL.sub("_", _text(s))
-    return re.sub(r"[<>|`\[\]()*]", "_", out)[:300]
+    """A filesystem path: no markup, pipes, backticks, brackets or control characters, at most 200."""
+    out = _CONTROL.sub("", _text(s))
+    return re.sub(r"[<>|`\[\]()*]", "_", out)[:200]
 
 
-def line(s: object) -> str:
-    """One line of free text, whitespace collapsed, at most 200 characters."""
-    out = _CONTROL.sub(" ", _text(s))
-    return _SPACE.sub(" ", out).strip()[:200]
+def line(s: object, keep: str = "") -> str:
+    """One line of free text: single line, `<>[]()` backticks and `!` removed, at most 160 characters.
+
+    `keep` names characters of that set to leave in (a rule such as `Bash(git:*)`)."""
+    strip = _LINE_STRIP if not keep else re.compile(
+        "[" + "".join(c for c in "<>[]()`!" if c not in keep).replace("[", r"\[").replace("]", r"\]") + "]")
+    out = strip.sub("", _CONTROL.sub(" ", _text(s)))
+    return _SPACE.sub(" ", out).strip()[:160]
 
 
 def md(s: object) -> str:
