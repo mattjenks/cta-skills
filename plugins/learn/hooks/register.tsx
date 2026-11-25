@@ -21,9 +21,9 @@ const drafts = atom(
 
 type Row = { id: string; decision: string; issue_url: string }
 type Rec = { id: string; skill: string; problem: string }
-// roots: the live checkout first, then worktrees; reportRoots: where a dated
-// report may live besides the live checkout.
-type Sources = { roots: string[]; reportRoots: Map<string, string[]> }
+// reports: the local reports folder; decisionRoots: the live knowledge-base
+// log first, then the learn-decisions worktree (empty when kb is unset).
+type Sources = { reports: string; decisionRoots: string[] }
 
 // Control characters and newlines to a space, so report text and a typed
 // reason stay one line.
@@ -33,12 +33,16 @@ const clean = (text: unknown): string =>
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .trim()
 
-// Only two keys are needed from the CTA config: top-level `kb` and `kb_dir`
-// inside [learn]. Quoted string values only.
-function parseConfig(text: string, home: string): { kb?: string; kbDir: string } {
+// Only three keys are needed from the CTA config: top-level `kb`, and `kb_dir`
+// and `reports_dir` inside [learn]. Quoted string values only.
+function parseConfig(
+  text: string,
+  home: string,
+): { kb?: string; kbDir: string; reportsDir: string } {
   let section = ''
   let kb: string | undefined
   let kbDir = 'learn'
+  let reportsDir = `${home}/.local/share/cta/learn`
   for (const raw of text.split('\n')) {
     const line = raw.trim()
     const head = /^\[([^\]]*)\]\s*(#.*)?$/.exec(line)
@@ -56,9 +60,13 @@ function parseConfig(text: string, home: string): { kb?: string; kbDir: string }
     } else if (section === 'learn' && kv[1] === 'kb_dir') {
       const ok = value.trim() !== '' && !value.startsWith('/') && !value.split('/').includes('..')
       kbDir = ok ? value : 'learn'
+    } else if (section === 'learn' && kv[1] === 'reports_dir') {
+      const full =
+        value === '~' ? home : value.startsWith('~/') ? `${home}/${value.slice(2)}` : value
+      if (full.startsWith('/') && !full.split('/').includes('..')) reportsDir = full
     }
   }
-  return { kb, kbDir }
+  return { kb, kbDir, reportsDir }
 }
 
 async function readText($: any, path: string): Promise<string | undefined> {
@@ -82,41 +90,19 @@ async function readJson($: any, path: string): Promise<unknown> {
 async function sources($: any): Promise<Sources | undefined> {
   const home = await $.env.get('HOME')
   if (!home) return undefined
-  const config = await readText($, `${home}/.config/cta/config.toml`)
-  if (config === undefined) return undefined
-  const { kb, kbDir } = parseConfig(config, home)
-  if (!kb) return undefined
-
-  // A new report lives in a worktree until its pull request merges.
-  const trees = `${home}/.local/share/cta/kb-worktrees`
-  let names: string[] = []
-  try {
-    names = (await $.fs.list(trees)).map((entry: { name: string }) => entry.name)
-  } catch {
-    names = []
-  }
-  const live = `${kb}/${kbDir}`
-  const reportRoots = new Map<string, string[]>()
-  const decisionRoots: string[] = []
-  const worktreeRoots: string[] = []
-  for (const name of names) {
-    const dated = /^learn-report-(\d{4}-\d{2}-\d{2})$/.exec(name)
-    if (dated) {
-      reportRoots.set(dated[1] ?? '', [live, `${trees}/${name}/${kbDir}`])
-      worktreeRoots.push(`${trees}/${name}/${kbDir}`)
-    } else if (name === 'learn-decisions') {
-      decisionRoots.push(`${trees}/${name}/${kbDir}`)
-    }
-  }
-  return { roots: [live, ...decisionRoots, ...worktreeRoots], reportRoots }
+  const config = (await readText($, `${home}/.config/cta/config.toml`)) ?? ''
+  const { kb, kbDir, reportsDir } = parseConfig(config, home)
+  const decisionRoots = kb
+    ? [`${kb}/${kbDir}`, `${home}/.local/share/cta/kb-worktrees/learn-decisions/${kbDir}`]
+    : []
+  return { reports: `${reportsDir}/reports`, decisionRoots }
 }
 
 // S8: each date is checked before it is listed or used in a path.
 async function listDates($: any, src: Sources): Promise<string[]> {
   const seen = new Set<string>()
-  for (const root of src.roots) {
-    const entries = await readJson($, `${root}/reports/index.json`)
-    if (!Array.isArray(entries)) continue
+  const entries = await readJson($, `${src.reports}/index.json`)
+  if (Array.isArray(entries)) {
     for (const entry of entries) {
       const date = entry && typeof entry === 'object' ? (entry as { date?: unknown }).date : undefined
       if (typeof date === 'string' && DATE.test(date)) seen.add(date)
@@ -128,7 +114,7 @@ async function listDates($: any, src: Sources): Promise<string[]> {
 // The latest row of an ID wins; the live log is read first.
 async function loadDecisions($: any, src: Sources): Promise<Map<string, Row>> {
   const rows = new Map<string, Row>()
-  for (const root of src.roots) {
+  for (const root of src.decisionRoots) {
     const text = await readText($, `${root}/decisions.jsonl`)
     for (const line of (text ?? '').split('\n')) {
       let row: any
@@ -154,21 +140,15 @@ async function loadReport(
   src: Sources,
   date: string,
 ): Promise<{ md: string | undefined; recs: Rec[] }> {
-  const roots = src.reportRoots.get(date) ?? src.roots.slice(0, 1)
-  let md: string | undefined
+  const md = await readText($, `${src.reports}/${date}.md`)
   let recs: Rec[] = []
-  for (const root of roots) {
-    md ??= await readText($, `${root}/reports/${date}.md`)
-    if (recs.length === 0) {
-      const data = (await readJson($, `${root}/reports/${date}.json`)) as any
-      if (data && Array.isArray(data.recommendations)) {
-        recs = data.recommendations.map((r: any) => ({
-          id: String(r?.id ?? ''),
-          skill: clean(r?.candidate?.skill),
-          problem: clean(r?.problem),
-        }))
-      }
-    }
+  const data = (await readJson($, `${src.reports}/${date}.json`)) as any
+  if (data && Array.isArray(data.recommendations)) {
+    recs = data.recommendations.map((r: any) => ({
+      id: String(r?.id ?? ''),
+      skill: clean(r?.candidate?.skill),
+      problem: clean(r?.problem),
+    }))
   }
   return { md, recs }
 }
@@ -211,7 +191,7 @@ export const register: Register = on => {
     if (!src) {
       return (
         <Box flexDirection="column">
-          <Text dimColor>The knowledge base is not configured: set kb in the CTA config.</Text>
+          <Text dimColor>The home folder is not available, so no reports can be read.</Text>
         </Box>
       )
     }

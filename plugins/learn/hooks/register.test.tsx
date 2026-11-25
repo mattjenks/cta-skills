@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 const HOME = '/home/tester'
 const KB = '/kb'
 const LIVE = `${KB}/learn`
+const LOCAL = `${HOME}/.local/share/cta/learn`
 const PANE = {
   plugin: 'learn',
   component: 'Pane',
@@ -56,9 +57,9 @@ const report = (date: string, recs: ReturnType<typeof rec>[]) =>
 function base(extra: Files = {}): Files {
   return {
     [`${HOME}/.config/cta/config.toml`]: `kb = "${KB}"\n`,
-    [`${LIVE}/reports/index.json`]: index(DATES),
-    [`${LIVE}/reports/2026-11-30.md`]: '# Report of the week',
-    [`${LIVE}/reports/2026-11-30.json`]: report('2026-11-30', [
+    [`${LOCAL}/reports/index.json`]: index(DATES),
+    [`${LOCAL}/reports/2026-11-30.md`]: '# Report of the week',
+    [`${LOCAL}/reports/2026-11-30.json`]: report('2026-11-30', [
       rec('2026-11-30-R1', 'alpha'),
       rec('2026-11-30-R2', 'beta'),
     ]),
@@ -89,7 +90,7 @@ test('the Select lists the 5 newest dates of 7', async ($, on) => {
 
 test('an index entry that is not a date is not listed', async ($, on) => {
   seed(on, base({
-    [`${LIVE}/reports/index.json`]: index(['../../x', '2026-11-30', '2026-11-3x']),
+    [`${LOCAL}/reports/index.json`]: index(['../../x', '2026-11-30', '2026-11-3x']),
   }))
   const ui = await $.ui.mount(PANE)
 
@@ -179,7 +180,7 @@ test('Reject reveals an Input; Send is disabled while blank, then submits', asyn
 
 test('a recommendation ID that is not valid never reaches submit', async ($, on) => {
   seed(on, base({
-    [`${LIVE}/reports/2026-11-30.json`]: report('2026-11-30', [
+    [`${LOCAL}/reports/2026-11-30.json`]: report('2026-11-30', [
       rec('2026-11-30-R1; rm -rf', 'alpha'),
     ]),
   }))
@@ -191,26 +192,83 @@ test('a recommendation ID that is not valid never reaches submit', async ($, on)
   await ui.unmount()
 })
 
-test('a report only in a worktree is listed and shown', async ($, on) => {
+test('lists the last 5 reports from reports_dir', async ($, on) => {
+  seed(on, base({ [`${LOCAL}/reports/index.json`]: index(DATES.slice(0, 6)) }))
+  const ui = await $.ui.mount(PANE)
+
+  const options = (await ui.find({ type: 'Select' }))?.props.options as { value: string }[]
+  expect(options.map(o => o.value)).toEqual(DATES.slice(0, 5))
+  await ui.unmount()
+})
+
+async function reportsDirOptions($: any, on: any, quoted: string, extra: Files = {}) {
+  seed(on, base({
+    [`${HOME}/.config/cta/config.toml`]: `kb = "${KB}"\n[learn]\nreports_dir = ${quoted}\n`,
+    [`${HOME}/r/reports/index.json`]: index(['2026-11-30']),
+    ...extra,
+  }))
+  const ui = await $.ui.mount(PANE)
+  const options = (await ui.find({ type: 'Select' }))?.props.options as { value: string }[]
+  await ui.unmount()
+  return options.map(o => o.value)
+}
+
+test('parses reports_dir quoted either way', async ($, on) => {
+  expect(await reportsDirOptions($, on, `'~/r'  # c`)).toEqual(['2026-11-30'])
+})
+
+test('parses reports_dir in double quotes', async ($, on) => {
+  expect(await reportsDirOptions($, on, `"~/r"`)).toEqual(['2026-11-30'])
+})
+
+test('a relative reports_dir falls back to the default folder', async ($, on) => {
+  expect(await reportsDirOptions($, on, `"rel"`)).toEqual(DATES.slice(0, 5))
+})
+
+test('a climbing reports_dir falls back to the default folder', async ($, on) => {
+  expect(await reportsDirOptions($, on, `"~/../x"`)).toEqual(DATES.slice(0, 5))
+})
+
+test('pane ignores old report worktree', async ($, on) => {
   const WT = `${HOME}/.local/share/cta/kb-worktrees`
   seed(
     on,
     base({
-      [`${LIVE}/reports/index.json`]: index(['2026-11-23']),
+      [`${LOCAL}/reports/index.json`]: index(['2026-11-23']),
       [`${WT}/learn-report-2026-11-30/learn/reports/index.json`]: index(['2026-11-30']),
       [`${WT}/learn-report-2026-11-30/learn/reports/2026-11-30.md`]: '# Fresh report',
-      [`${WT}/learn-report-2026-11-30/learn/reports/2026-11-30.json`]: report('2026-11-30', [rec('2026-11-30-R1', 'gamma')]),
-      [`${WT}/learn-decisions/learn/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R1', decision: 'defer', issue_url: '', reason: '' }),
     }),
-    { [WT]: ['learn-report-2026-11-30', 'learn-decisions', 'learn-report-../x'] },
+    { [WT]: ['learn-report-2026-11-30', 'learn-decisions'] },
   )
   const ui = await $.ui.mount(PANE)
 
   const options = (await ui.find({ type: 'Select' }))?.props.options as { value: string }[]
-  expect(options.map(o => o.value)).toEqual(['2026-11-30', '2026-11-23'])
-  expect(await ui.find({ type: 'Markdown' })).toBeDefined()
+  expect(options.map(o => o.value)).toEqual(['2026-11-23'])
+  await ui.unmount()
+})
+
+test('decisions still read from kb and learn-decisions', async ($, on) => {
+  const WT = `${HOME}/.local/share/cta/kb-worktrees`
+  seed(on, base({
+    [`${LIVE}/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R1', decision: 'accept', issue_url: '', reason: '' }),
+    [`${WT}/learn-decisions/learn/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R2', decision: 'defer', issue_url: '', reason: '' }),
+  }))
+  const ui = await $.ui.mount(PANE)
+
   expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-R1' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-R2' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /accept/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /defer/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('without kb the reports still list and decisions are empty', async ($, on) => {
+  seed(on, base({ [`${HOME}/.config/cta/config.toml`]: '[learn]\n' }))
+  const ui = await $.ui.mount(PANE)
+
+  const options = (await ui.find({ type: 'Select' }))?.props.options as { value: string }[]
+  expect(options.map(o => o.value)).toEqual(DATES.slice(0, 5))
+  expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-R1' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -221,13 +279,5 @@ test('kb_dir that is absolute or climbs falls back to learn', async ($, on) => {
   const ui = await $.ui.mount(PANE)
 
   expect(await ui.find({ type: 'Select' })).toBeDefined()
-  await ui.unmount()
-})
-
-test('a missing kb says the knowledge base is not configured', async ($, on) => {
-  seed(on, { [`${HOME}/.config/cta/config.toml`]: '[learn]\n' })
-  const ui = await $.ui.mount(PANE)
-
-  expect(await ui.find({ type: 'Text', text: /not configured/ })).toBeDefined()
   await ui.unmount()
 })
