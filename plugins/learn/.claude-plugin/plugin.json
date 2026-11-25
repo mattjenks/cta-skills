@@ -1,7 +1,7 @@
 {
   "name": "learn",
   "displayName": "CTA Learn",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Chief Technology Assistant learn stage: a weekly report on how your skills perform, with recommendations you accept or reject.",
   "author": {
     "name": "Matt Jenks",
