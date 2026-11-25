@@ -615,3 +615,39 @@ def test_loop_does_not_duplicate_procedures():
 def test_new_skills_say_what_and_when(skill):
     head = (SKILLS / skill / "SKILL.md").read_text().split("---")[1]
     assert re.search(r"^description: .*(Use (when|after|to|at)|when asked)", head, re.M | re.I)
+
+
+def _frontmatter(skill: str) -> str:
+    return (SKILLS / skill / "SKILL.md").read_text().split("---")[1]
+
+
+def test_implement_and_loop_take_unattended_flag():
+    for skill in ("implement", "loop"):
+        hint = re.search(r"argument-hint:.*", _frontmatter(skill)).group(0)
+        assert "--unattended" in hint, f"{skill}: argument-hint lacks --unattended"
+
+
+def test_implement_records_mode_in_ledger():
+    has(
+        "implement",
+        r"Mode: unattended",
+        r"Mode: attended",
+        r"resumed session reads the mode from the ledger",
+    )
+
+
+def test_unattended_skips_hand_off_but_not_usage_cap():
+    has(
+        "implement",
+        r"unattended.{0,200}(no|never|not).{0,40}hand.?off",
+        r"unattended.{0,300}usage cap|usage cap.{0,300}unattended",
+        r"compaction",
+    )
+
+
+def test_loop_passes_unattended_to_implement():
+    has(
+        "loop",
+        r"--unattended.{0,80}/build:implement|/build:implement.{0,80}--unattended",
+        r"hand-off.{0,80}attended runs|attended runs.{0,80}hand-off",
+    )

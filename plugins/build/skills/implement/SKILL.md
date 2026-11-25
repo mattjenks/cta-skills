@@ -1,7 +1,7 @@
 ---
 name: implement
 description: Builds an approved design or plan task by task with subagents, tests first, a spec check and at most two fix rounds per task on Normal changes, and a commit and push after each. Use after /build:design (Small) or /build:plan (Normal) is approved, or when asked to "implement this", "build it" or "start the tasks". Refuses unapproved work.
-argument-hint: "[topic]"
+argument-hint: "[topic] [--unattended]"
 ---
 
 <!-- Adapted from obra/superpowers skills/subagent-driven-development/SKILL.md and skills/test-driven-development/SKILL.md (MIT) -->
@@ -33,15 +33,19 @@ prompts pass file paths, never pasted content. Model map: `references/models.md`
   worktree). One row per task: number, title, status (`todo`, `building`, `reviewing`, `fixing`, `done`,
   `blocked`), base and head sha, review rounds, notes. Write it before dispatching, update it after every
   step. A fresh session resumes from this file alone.
+  The header carries a line `Mode: unattended` or `Mode: attended` (default attended), written with the
+  ledger. A resumed session reads the mode from the ledger. A `--unattended` flag given on resume
+  overrides the ledger and updates the line.
 
 ## 2. Per task
 
 Repeat for each task in order, never in parallel.
 
 1. **Usage check.** Before dispatching, read the context level and the account usage with the app's usage
-   tool. Stop and tell the owner if the account is near its usage cap. If context is past 40% or three tasks
+   tool. Stop and tell the owner if the account is near its usage cap. Attended: if context is past 40% or three tasks
    have run in this session, do the hand-off in section 4 instead of starting the task. With no usage tool
-   available, treat context as unknown and hand off every 3 tasks.
+   available, treat context as unknown and hand off every 3 tasks. Unattended: still stop at the account
+   usage cap, but never hand off for context or task count; leave context to automatic compaction.
 2. **Branch.** Before the builder commits anything, run `git branch --show-current` in the code repo. If it is
    the default branch, stop and tell the owner; never build there.
 3. **Brief.** `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/workspace.py" brief PLAN TASK` writes the task brief;
@@ -83,6 +87,8 @@ When every task is `done`: run `/build:validate` once over the whole branch, the
 ready for `/build:secure` (scanners) and `/build:review` (the one code review). Do not start them uninvited.
 
 ## 4. Hand-off
+
+Attended runs only. Unattended runs do not hand off; the ledger stays current after every step.
 
 Context is state you can lose, the ledger is not. Hand off to a fresh session at a task boundary, never
 mid-task, when context passes 40% or after every 3 tasks, whichever comes first:
