@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -116,6 +117,12 @@ def test_live_snapshot_trims_partial_trailing_line(dirs):
 
 
 @pytest.fixture(autouse=True)
+def isolated_reports(monkeypatch, tmp_path):
+    """Never reach the real local reports folder: point it at an empty tmp path."""
+    monkeypatch.setattr(backup_mod, "local_reports_dir", lambda: tmp_path / "no-local-reports")
+
+
+@pytest.fixture(autouse=True)
 def not_macos(monkeypatch):
     """No real notification from any test unless it opts in with a fake runner."""
     monkeypatch.setattr(backup_mod.platform, "system", lambda: "Linux")
@@ -221,3 +228,148 @@ def test_unexpected_error_notifies(monkeypatch):
     run = FakeRun()
     assert backup_mod.main([], run=run) == 1
     assert "CTA telemetry backup failed: RuntimeError: config loader exploded" in run.calls[0][0][2]
+
+
+# ---- learn reports backup ----
+
+KINDS = ("json", "md", "html", "delivery.json")
+
+
+def make_reports(src, dates, index=None):
+    src.mkdir(parents=True, exist_ok=True)
+    for d in dates:
+        for kind in KINDS:
+            (src / f"{d}.{kind}").write_text(f"{d} {kind}", encoding="utf-8")
+    (src / "index.json").write_text(
+        json.dumps([{"date": d} for d in dates] if index is None else index), encoding="utf-8")
+
+
+def names(path):
+    return sorted(p.name for p in path.iterdir())
+
+
+def test_reports_backup_keeps_newest_five(tmp_path):
+    src, dest = tmp_path / "reports", tmp_path / "out"
+    dates = [f"2026-01-{d:02d}" for d in range(1, 8)]
+    make_reports(src, dates)
+    n = backup_mod.backup_reports(src, dest)
+    assert n == 5 * 4 + 1
+    expected = sorted([f"{d}.{k}" for d in dates[2:] for k in KINDS] + ["index.json"])
+    assert names(dest) == expected
+    assert (dest / "2026-01-07.md").read_text() == "2026-01-07 md"
+    assert backup_mod.backup_reports(src, dest) == 0  # same size and hash: skipped
+
+
+def test_reports_backup_prunes_older_dates_at_dest(tmp_path):
+    src, dest = tmp_path / "reports", tmp_path / "out"
+    make_reports(src, ["2026-02-01"])
+    dest.mkdir()
+    for k in KINDS:
+        (dest / f"2025-12-01.{k}").write_text("old")
+    (dest / "notes.txt").write_text("keep")
+    backup_mod.backup_reports(src, dest)
+    assert names(dest) == sorted([f"2026-02-01.{k}" for k in KINDS] + ["index.json", "notes.txt"])
+
+
+def test_reports_backup_with_fewer_than_five(tmp_path):
+    src, dest = tmp_path / "reports", tmp_path / "out"
+    make_reports(src, ["2026-02-01", "2026-02-08"])
+    (src / "2026-02-15.delivery.json").write_text("orphan")
+    (src / "index.json").write_text(
+        json.dumps([{"date": d} for d in ("2026-02-01", "2026-02-08", "2026-02-15")]))
+    assert backup_mod.backup_reports(src, dest) == 2 * 4 + 1
+    assert not (dest / "2026-02-15.delivery.json").exists()
+
+
+def test_reports_backup_missing_source_is_success(dirs, monkeypatch, tmp_path):
+    src, dest = dirs
+    assert backup_mod.backup_reports(tmp_path / "absent", tmp_path / "out") == 0
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: dest)
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+    run = FakeRun()
+    assert backup_mod.main(["--day", "2026-03-10"], run=run) == 0
+    assert run.calls == []
+
+
+def test_reports_failure_does_not_stop_telemetry(dirs, monkeypatch):
+    src, dest = dirs
+    make(src / "otel-20260308T010000.jsonl", b"old", date(2026, 3, 8))
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: dest)
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+
+    def boom(*a, **kw):
+        raise OSError("icloud offline")
+
+    monkeypatch.setattr(backup_mod, "backup_reports", boom)
+    run = FakeRun()
+    assert backup_mod.main(["--day", "2026-03-10"], run=run) == 1
+    assert (dest / "otel-20260308T010000.jsonl").read_bytes() == b"old"
+    assert len(run.calls) == 1
+    assert "reports" in run.calls[0][0][2] and "icloud offline" in run.calls[0][0][2]
+
+
+def test_both_failures_in_one_notification(dirs, monkeypatch):
+    src, dest = dirs
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: dest)
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+
+    def boom(*a, **kw):
+        raise OSError("nope")
+
+    monkeypatch.setattr(backup_mod, "backup", lambda *a, **kw: (_ for _ in ()).throw(backup_mod.BackupError("tele bad")))
+    monkeypatch.setattr(backup_mod, "backup_reports", boom)
+    run = FakeRun()
+    assert backup_mod.main(["--day", "2026-03-10"], run=run) == 1
+    assert len(run.calls) == 1
+    assert "tele bad" in run.calls[0][0][2] and "reports" in run.calls[0][0][2]
+
+
+def test_reports_dest_is_sibling_of_backup_dir(dirs, monkeypatch, tmp_path):
+    src, _ = dirs
+    local = tmp_path / "local" / "reports"
+    make_reports(local, ["2026-02-01"])
+    backup_dir = tmp_path / "CTA" / "telemetry"
+    monkeypatch.setattr(backup_mod, "local_reports_dir", lambda: local)
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: backup_dir)
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+    assert backup_mod.main(["--day", "2026-03-10"], run=FakeRun()) == 0
+    assert (tmp_path / "CTA" / "learn" / "reports" / "2026-02-01.json").exists()
+    assert (tmp_path / "CTA" / "learn" / "reports" / "index.json").exists()
+
+
+def test_reports_backup_skips_bad_index_dates(tmp_path):
+    src, dest = tmp_path / "reports", tmp_path / "out"
+    make_reports(src, ["2026-02-01"], index=[
+        {"date": "../x"}, {"date": "2026-13-01"}, {"date": 5}, {"date": "2026-02-01\n"},
+        {"date": "2026-02-01"}])
+    (tmp_path / "x.json").write_text("outside")
+    backup_mod.backup_reports(src, dest)
+    assert names(dest) == sorted([f"2026-02-01.{k}" for k in KINDS] + ["index.json"])
+    assert names(tmp_path) == ["out", "reports", "x.json"]
+
+
+def test_reports_backup_skips_symlinks(tmp_path):
+    src, dest = tmp_path / "reports", tmp_path / "out"
+    make_reports(src, ["2026-02-01"])
+    secret = tmp_path / "secret.txt"
+    secret.write_text("secret")
+    (src / "2026-02-01.md").unlink()
+    (src / "2026-02-01.md").symlink_to(secret)
+    backup_mod.backup_reports(src, dest)
+    assert not (dest / "2026-02-01.md").exists()
+    assert (dest / "2026-02-01.json").exists() and (dest / "2026-02-01.html").exists()
+
+
+def test_local_reports_dir_follows_config(monkeypatch, tmp_path):
+    cfg = tmp_path / "c.toml"
+    monkeypatch.setenv("CTA_CONFIG", str(cfg))
+    cfg.write_text(f'[learn]\nreports_dir = "{tmp_path}/mine"\n')
+    monkeypatch.undo()  # drop the autouse stubs; env is re-set below
+    monkeypatch.setenv("CTA_CONFIG", str(cfg))
+    assert backup_mod.local_reports_dir() == tmp_path / "mine" / "reports"
+    for bad in ('"rel/x"', '"~/../x"', "5"):
+        cfg.write_text(f"[learn]\nreports_dir = {bad}\n")
+        assert backup_mod.local_reports_dir() == backup_mod.DEFAULT_REPORTS_DIR / "reports"
