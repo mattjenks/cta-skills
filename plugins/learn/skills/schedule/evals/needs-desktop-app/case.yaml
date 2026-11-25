@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: needs-desktop-app
+expected_outcome: |
+  With no scheduled-tasks tools available, the skill says the schedule needs the Claude desktop app and stops, without creating anything by another route.

@@ -24,3 +24,13 @@ def test_build_panels_present():
 def test_panel_ids_unique():
     ids = [p["id"] for p in json.loads(DASHBOARD.read_text())["panels"]]
     assert len(ids) == len(set(ids))
+
+
+def test_learn_decisions_panel_present():
+    panels = _panels()
+    title = "Learn decisions by type (range)"
+    assert title in panels, title
+    targets = panels[title]["targets"]
+    assert targets and all("cta.learn.decision" in t["expr"] for t in targets)
+    assert all("by (decision)" in t["expr"] for t in targets)
+    assert all(t["datasource"]["uid"] == "cta-loki" for t in targets)

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: updates-existing-task
+expected_outcome: |
+  The skill lists the tasks first, finds cta-weekly-report and updates it instead of creating a second, then tells the owner about missed runs and offers a test run without running one unasked.

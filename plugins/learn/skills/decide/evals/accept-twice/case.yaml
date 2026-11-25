@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: accept-twice
+expected_outcome: |
+  A second decision on an already decided recommendation is reported as the existing decision: nothing is filed again, nothing is logged again, and the skill does not retry with another decision.

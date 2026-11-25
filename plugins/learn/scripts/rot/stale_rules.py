@@ -1,0 +1,49 @@
+"""Rules files that name a path that no longer exists."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import sanitize
+from model import RotItem
+from rot import _common
+
+KIND = "stale"
+_TICKS = re.compile(r"`([^`\n]+)`")
+_EXT = re.compile(r"\.[A-Za-z0-9]{1,6}$")
+
+
+def _candidate(token: str) -> str | None:
+    """A relative file path worth checking, or None."""
+    if re.search(r"[\s*<>${}|]", token) or "://" in token:
+        return None
+    if token.startswith(("/", "~", "-", "@", "#")) or ".." in Path(token).parts:
+        return None
+    token = token.split("#", 1)[0].split(":", 1)[0]
+    if token and ("/" in token or _EXT.search(token)):
+        return token
+    return None
+
+
+def _files(cfg):
+    if cfg.kb is not None:
+        for name in ("CLAUDE.md", "PREFERENCES.md"):
+            yield cfg.kb / name, cfg.kb
+    for repo in cfg.repos:
+        if _common.personal_repo(repo, cfg):
+            yield repo / "CLAUDE.md", repo
+
+
+def check(week, cfg) -> list[RotItem]:
+    items: list[RotItem] = []
+    for path, root in _files(cfg):
+        for number, text in _common.scan_lines(path):
+            for token in _TICKS.findall(text):
+                rel = _candidate(token.strip())
+                if rel and not (root / rel).exists():
+                    items.append(_common.item(
+                        "stale", f"{sanitize.path(path)}:{number}",
+                        f"names {sanitize.path(rel)}, which does not exist",
+                        "update or remove the line"))
+    return items

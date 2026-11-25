@@ -536,6 +536,49 @@
         },
         "overrides": []
       }
+    },
+    {
+      "id": 13,
+      "title": "Learn decisions by type (range)",
+      "type": "bargauge",
+      "datasource": {
+        "type": "loki",
+        "uid": "cta-loki"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "cta-loki"
+          },
+          "expr": "sum by (decision) (count_over_time({service_name=~\".+\"} | event_name=\"cta.learn.decision\" [$__range]))",
+          "legendFormat": "{{decision}}",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
     }
   ],
   "templating": {

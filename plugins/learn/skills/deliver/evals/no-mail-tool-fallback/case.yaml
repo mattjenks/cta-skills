@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: no-mail-tool-fallback
+expected_outcome: |
+  With no connected tool that can send email, the skill raises the notification and then records a fallback, and says so.

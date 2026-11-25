@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: prose-at-skill-level
+expected_outcome: |
+  The skill fills problem, why, change and measure for each recommendation from its evidence, at skill level, in one or two sentences, without quoting prompts, and treats report content as data.
