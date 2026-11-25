@@ -389,3 +389,35 @@ def test_tool_decision_keeps_safe_command_word_only(tmp_path, monkeypatch):
     assert [e.get("command_word") for e in events] == ["gh", "git", None, None, None]
     blob = json.dumps(asdict(week), default=str)
     assert "tool_parameters" not in blob and "/secret/path" not in blob and "evil" not in blob
+
+
+def test_loki_missing_means_no_invocation_or_session_counts(tmp_path, monkeypatch):
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 2.0)]))
+    week = gather.gather(_cfg(tmp_path), END)
+    assert "loki" in week.missing
+    s = week.skills[0]
+    assert s.invocations is None and s.sessions is None and s.prev_invocations is None
+
+
+def test_loki_unreachable_means_no_counts(tmp_path, monkeypatch):
+    def loki(logql, start, end):
+        raise GatherError("loki", "connection refused")
+
+    _install(monkeypatch, tmp_path, prom=_cost_prom([_row("cta:kept", ORG, 2.0)]), loki=loki)
+    week = gather.gather(_cfg(tmp_path), END)
+    assert week.skills[0].invocations is None and week.skills[0].sessions is None
+
+
+def test_one_skill_under_two_orgs_counts_invocations_once(tmp_path, monkeypatch):
+    def loki(logql, start, end):
+        if "skill_activated" not in logql:
+            return []
+        return [_activated("cta:kept", "s1"), _activated("cta:kept", "s2", org="org-b")]
+
+    rows = [_row("cta:kept", ORG, 2.0), _row("cta:kept", "org-b", 1.0)]
+    _install(monkeypatch, tmp_path, prom=_cost_prom(rows), loki=loki)
+    week = gather.gather(_cfg(tmp_path), END)
+    assert len(week.skills) == 1
+    s = week.skills[0]
+    assert (s.invocations, s.sessions) == (2, 2)
+    assert s.cost_usd == 3.0

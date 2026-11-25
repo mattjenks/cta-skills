@@ -442,3 +442,27 @@ def test_fallback_in_previous_delivery_worktree_shows_in_next_report(tmp_path, m
     cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
     r = report.build(cfg, END)
     assert f"delivery fallback for {prior}" in r.errors
+
+
+def test_loki_down_top_table_says_no_data_not_zero():
+    s = SkillUsage(skill="cta:a", plugin=None, marketplace=None, invocations=None,
+                   sessions=None, input_tokens=100, output_tokens=50, cost_usd=3.0,
+                   prev_cost_usd=2.0, prev_invocations=None)
+    r = _report(top=[s], total_cost=3.0, status="red", headline="No data from loki",
+                health={"prometheus": "2026-11-22T10:00:00+00:00", "loki": None},
+                errors=["loki unreachable"])
+    md = report.render_md(r)
+    row = next(ln for ln in md.splitlines() if ln.startswith("| cta:a"))
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    assert cells[1] == "no data"
+    assert "0" not in cells[1]
+    assert "no data" in report.render_html(r)
+
+
+def test_select_skips_skills_without_session_counts(tmp_path):
+    s = SkillUsage(skill="cta:a", plugin=None, marketplace=None, invocations=None,
+                   sessions=None, input_tokens=0, output_tokens=0, cost_usd=9.0,
+                   prev_cost_usd=2.0, prev_invocations=None)
+    week = Week(start=date(2026, 11, 16), end=END, skills=[s], missing=["loki"])
+    cands, over, errors = candidates.select(week, _cfg(tmp_path), tmp_path / "none.jsonl")
+    assert cands == [] and over == [] and not [e for e in errors if "failed" in e]

@@ -106,6 +106,10 @@ def _unreachable(r: Report) -> list[str]:
     return out
 
 
+def _count(n: int | None) -> str:
+    return "no data" if n is None else str(n)
+
+
 def _more(r: Report, extra: int) -> Link:
     return Link(f"+{extra} more", r.links.get("grafana", ""))
 
@@ -128,7 +132,7 @@ def _sections(r: Report) -> list[tuple[str, list[tuple]]]:
     elif not r.top:
         top.append(("p", "None."))
     else:
-        rows = [[s.skill, str(s.invocations), str(s.input_tokens), str(s.output_tokens),
+        rows = [[s.skill, _count(s.invocations), str(s.input_tokens), str(s.output_tokens),
                  _money(s.cost_usd), _change(s.cost_usd, s.prev_cost_usd)] for s in r.top]
         top.append(("table", ["Skill", "Invocations", "Input tokens", "Output tokens", "Cost",
                               "Change"], rows))

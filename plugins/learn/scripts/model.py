@@ -12,8 +12,8 @@ class SkillUsage:
     skill: str
     plugin: str | None
     marketplace: str | None
-    invocations: int
-    sessions: int
+    invocations: int | None
+    sessions: int | None
     input_tokens: int
     output_tokens: int
     cost_usd: float

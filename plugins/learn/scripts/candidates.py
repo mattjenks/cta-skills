@@ -18,7 +18,7 @@ MAX_CANDIDATES = 5
 
 
 def top_skills(week: Week, n: int = TOP_SKILLS) -> list[SkillUsage]:
-    return sorted(week.skills, key=lambda s: (-s.cost_usd, -s.invocations, s.skill))[:n]
+    return sorted(week.skills, key=lambda s: (-s.cost_usd, -(s.invocations or 0), s.skill))[:n]
 
 
 def suppressed(decisions_path: Path) -> set[str]:
@@ -46,6 +46,8 @@ def select(week: Week, cfg: LearnConfig, decisions_path: Path
     rejected = suppressed(decisions_path)
     found: list[Candidate] = []
     for skill in top_skills(week):
+        if skill.sessions is None:
+            continue  # no session count (Loki missing): nothing can be strongly backed
         for mod in mods:
             try:
                 cand = mod.evaluate(week, skill)

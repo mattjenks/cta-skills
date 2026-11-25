@@ -341,8 +341,7 @@ def gather(cfg: learn_config.LearnConfig, end: date) -> Week:
         )
         if usage.skill in merged:  # same skill under two organizations of the personal set
             m = merged[usage.skill]
-            m.invocations += usage.invocations
-            m.sessions += usage.sessions
+            # invocations and sessions are per skill, not per organization: not summed
             m.input_tokens += usage.input_tokens
             m.output_tokens += usage.output_tokens
             m.cost_usd += usage.cost_usd
@@ -377,6 +376,9 @@ def gather(cfg: learn_config.LearnConfig, end: date) -> Week:
         week.freshness["loki"] = _iso_ns(newest_ns)
     if "loki" not in run.down and not saw_loki:
         week.missing.append("loki")
+    if "loki" in week.missing:  # missing is not zero: no counts without Loki
+        for usage in week.skills:
+            usage.invocations = usage.sessions = usage.prev_invocations = None
     return week
 
 
