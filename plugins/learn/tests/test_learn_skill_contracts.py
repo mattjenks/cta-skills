@@ -162,6 +162,13 @@ def test_deliver_has_two_evals():
     assert len(cases) >= 2
 
 
+def test_deliver_eval_cases_cover_skipped_and_cta_reports():
+    base = SKILLS / "deliver" / "evals"
+    assert (base / "no-address-skips" / "case.yaml").is_file()
+    fb = "".join(f.read_text() for f in (base / "no-mail-tool-fallback").rglob("*.md"))
+    assert "/cta-reports" in fb and "notify --result fallback" in fb
+
+
 # --- schedule ---
 
 

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: no-address-skips
+expected_outcome: |
+  When prepare prints to: null, the skill raises the skipped notification, records skipped, sends no email, and reports it as skipped rather than as an error.
