@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import learn_config
 from learn_config import Delivery, LearnConfig, learn_dir, load_learn_config
 
 
@@ -77,6 +78,46 @@ def test_repos_from_projects(tmp_path):
 "{b}" = "beta"
 '''))
     assert set(cfg.repos) == {a.resolve(), b.resolve()}
+
+
+REPORTS_NOTE = "config invalid: learn.reports_dir: must be an absolute folder or start with ~/ and have no '..'"
+
+
+def test_reports_dir_defaults_under_local_share(tmp_path):
+    cfg = load_learn_config(_write(tmp_path, f'kb = "{tmp_path}"\n'))
+    assert cfg.reports_dir == Path.home() / ".local/share/cta/learn"
+    assert learn_config.reports_dir(cfg) == cfg.reports_dir / "reports"
+    assert learn_config.local_dir(cfg) == cfg.reports_dir
+    assert cfg.notes == ()
+
+
+def test_reports_dir_expands_tilde(tmp_path):
+    cfg = load_learn_config(_write(tmp_path, f'''kb = "{tmp_path}"
+[learn]
+reports_dir = "~/x/learn"
+'''))
+    assert cfg.reports_dir == Path.home() / "x/learn"
+    assert cfg.notes == ()
+
+
+def test_reports_dir_accepts_absolute(tmp_path):
+    target = tmp_path / "r"
+    cfg = load_learn_config(_write(tmp_path, f'''kb = "{tmp_path}"
+[learn]
+reports_dir = "{target}"
+'''))
+    assert cfg.reports_dir == target
+    assert cfg.notes == ()
+
+
+@pytest.mark.parametrize("value", ['"rel/dir"', '"~/../x"', '"/a/../b"', '""', '5'])
+def test_reports_dir_rejects_relative_and_dotdot(tmp_path, value):
+    cfg = load_learn_config(_write(tmp_path, f'''kb = "{tmp_path}"
+[learn]
+reports_dir = {value}
+'''))
+    assert cfg.reports_dir == Path.home() / ".local/share/cta/learn"
+    assert cfg.notes == (REPORTS_NOTE,)
 
 
 def test_learn_dir_requires_kb():
