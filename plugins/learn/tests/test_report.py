@@ -239,7 +239,7 @@ def test_build_missing_source_is_red(tmp_path, monkeypatch):
 
 def test_no_excluded_orgs_noted(tmp_path, monkeypatch):
     _stub(monkeypatch, _fresh_week())
-    r = report.build(learn_config.LearnConfig(kb=tmp_path), END)
+    r = report.build(_cfg(tmp_path, exclude_organization_ids=()), END)
     assert "no excluded organizations configured" in r.errors
     assert r.status == "green"
     assert "no excluded organizations configured" in report.render_md(r)

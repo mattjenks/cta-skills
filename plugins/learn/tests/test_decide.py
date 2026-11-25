@@ -326,7 +326,7 @@ def test_row_feeds_followups_and_suppression(env):
     assert row["value"] == 2.0
     # the real layout: the report reads the live checkout, the row sits only on the worktree
     assert not (env.kb / "learn" / "decisions.jsonl").exists()
-    cfg = learn_config.LearnConfig(kb=env.kb)
+    cfg = learn_config.LearnConfig(kb=env.kb, reports_dir=env.kb.parent / "local")
     week = Week(start=date(2026, 11, 23), end=date(2026, 11, 30))
     got = report._followups(cfg, week, env.kb / "learn" / "reports", date(2026, 11, 30),
                               report._decision_files(cfg))
