@@ -76,11 +76,13 @@ class Env:
     def __init__(self, tmp_path, monkeypatch):
         self.tmp = tmp_path
         self.kb = tmp_path / "kb"
+        self.local = tmp_path / "local"
         self.state = tmp_path / "gh-state"
         self.state.mkdir()
         self.wt_root = tmp_path / "worktrees"
         self.events = []
-        self.cfg = learn_config.LearnConfig(kb=self.kb, fallback_repo=FALLBACK)
+        self.cfg = learn_config.LearnConfig(kb=self.kb, fallback_repo=FALLBACK,
+                                            reports_dir=self.local)
         bindir = tmp_path / "bin"
         bindir.mkdir()
         stub = bindir / "gh"
@@ -111,11 +113,10 @@ class Env:
             git(self.kb, "config", "user.name", "Learn Test")
             git(self.kb, "config", "user.email", "learn-test@example.invalid")
             git(self.kb, "config", "commit.gpgsign", "false")
-        reports = self.kb / "learn" / "reports"
+            git(self.kb, "commit", "--allow-empty", "-m", "init")
+        reports = self.local / "reports"  # the configured reports_dir, never the knowledge base
         reports.mkdir(parents=True, exist_ok=True)
         (reports / "2026-11-23.json").write_text(report.to_json(rep))
-        git(self.kb, "add", "-A")
-        git(self.kb, "commit", "-m", "report")
 
     def use_real_gitleaks(self, monkeypatch):
         monkeypatch.setenv("PATH", f"{self.bindir}{os.pathsep}{self.base_path}")
@@ -148,7 +149,8 @@ class Env:
     def cli(self, monkeypatch, *argv, stdin=""):
         monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
         cfg_path = self.tmp / "config.toml"
-        cfg_path.write_text(f'kb = "{self.kb}"\n[learn]\nfallback_repo = "{FALLBACK}"\n')
+        cfg_path.write_text(f'kb = "{self.kb}"\n[learn]\nfallback_repo = "{FALLBACK}"\n'
+                            f'reports_dir = "{self.local}"\n')
         return decide.main([*argv, "--config", str(cfg_path)])
 
 
@@ -203,9 +205,28 @@ def test_accept_falls_back_when_not_writable(env, monkeypatch):
     assert SKILL_REPO in row["reason"] and "not writable" in row["reason"]
 
 
+def test_decide_loads_report_from_reports_dir(env):
+    assert (env.local / "reports" / "2026-11-23.json").exists()
+    assert not (env.kb / "learn" / "reports").exists()
+    row = decide.decide(env.cfg, RID, "defer", None)
+    assert row["id"] == RID and row["decision"] == "defer"
+
+
+def test_decide_ignores_old_report_worktree(env, monkeypatch, capsys):
+    (env.local / "reports" / "2026-11-23.json").unlink()
+    old = env.wt_root / "learn-report-2026-11-23" / "learn" / "reports"
+    old.mkdir(parents=True)
+    (old / "2026-11-23.json").write_text(report.to_json(_report()))
+    with pytest.raises(decide.DecideError) as err:
+        decide.decide(env.cfg, RID, "defer", None)
+    assert err.value.code == 2 and "no report found" in str(err.value)
+    assert env.cli(monkeypatch, RID, "defer") == 2
+    assert "no report found" in capsys.readouterr().err
+
+
 def test_accept_no_repo_exit_3(env, monkeypatch):
     monkeypatch.setenv("GH_PUSH", "false")
-    cfg = learn_config.LearnConfig(kb=env.kb)
+    cfg = learn_config.LearnConfig(kb=env.kb, reports_dir=env.local)
     with pytest.raises(decide.DecideError) as err:
         decide.decide(cfg, RID, "accept", None)
     assert err.value.code == 3 and "no repo to file in" in str(err.value)
