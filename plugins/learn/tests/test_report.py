@@ -472,3 +472,45 @@ def test_select_skips_skills_without_session_counts(tmp_path):
     week = Week(start=date(2026, 11, 16), end=END, skills=[s], missing=["loki"])
     cands, over, errors = candidates.select(week, _cfg(tmp_path), tmp_path / "none.jsonl")
     assert cands == [] and over == [] and not [e for e in errors if "failed" in e]
+
+
+def _worktree_decisions(cfg_kb_dir, *rows):
+    import decide
+    path = decide.WORKTREE_ROOT / "learn-decisions" / cfg_kb_dir / "decisions.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def _growing_week():
+    # cost 3.0 against 2.0 is 1.5x with 4 sessions: past the cost_growth bar
+    return _fresh_week([_skill()])
+
+
+def test_rejection_only_in_the_decisions_worktree_still_suppresses(tmp_path, monkeypatch):
+    monkeypatch.setattr(gather, "gather", lambda cfg, end: _growing_week())
+    monkeypatch.setattr(rot, "run_rot", lambda w, c: ({k: [] for k in KINDS},
+                                                      {k: 0 for k in KINDS}, []))
+    cfg = _cfg(tmp_path)
+    assert [r.candidate.fingerprint for r in report.build(cfg, END).recommendations] == [
+        "alpha|cost_growth"]
+    _worktree_decisions(cfg.kb_dir, {"id": "2026-11-16-R1", "skill": "alpha",
+                                     "fingerprint": "alpha|cost_growth", "decision": "reject",
+                                     "date": "2026-11-16"})
+    assert not (tmp_path / "learn" / "decisions.jsonl").exists()
+    assert report.build(cfg, END).recommendations == []
+
+
+def test_accept_only_in_the_decisions_worktree_is_followed_up(tmp_path, monkeypatch):
+    _stub(monkeypatch, _growing_week(), cands=[])
+    cfg = _cfg(tmp_path)
+    _worktree_decisions(cfg.kb_dir, _accepted("2026-11-16-R1", "2026-11-16"))
+    assert [f.id for f in report.build(cfg, END).followups] == ["2026-11-16-R1"]
+
+
+def test_same_decision_in_both_places_counts_once(tmp_path, monkeypatch):
+    _stub(monkeypatch, _growing_week(), cands=[])
+    cfg = _cfg(tmp_path)
+    row = _accepted("2026-11-16-R1", "2026-11-16")
+    _decisions(tmp_path, row)
+    _worktree_decisions(cfg.kb_dir, row)
+    assert [f.id for f in report.build(cfg, END).followups] == ["2026-11-16-R1"]

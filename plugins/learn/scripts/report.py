@@ -492,10 +492,27 @@ def _moved(before: float, now: float | None, week: Week, skill: str) -> str:
     return "better" if now < before else "worse"  # every signal so far: lower is better
 
 
+def _decision_files(cfg, learn_dir: Path) -> list[Path]:
+    """The decisions log in the checkout, then the one on the `learn/decisions` worktree.
+
+    A decision is written to the worktree first; it is in the checkout only after its pull
+    request merges and the checkout is updated.
+    """
+    import decide  # deferred: decide imports this module
+    files = [learn_dir / "decisions.jsonl"]
+    files.append(decide.WORKTREE_ROOT / "learn-decisions" / cfg.kb_dir / "decisions.jsonl")
+    return files
+
+
 def _followups(cfg, week: Week, reports: Path, end: date) -> list[Followup]:
-    try:
-        lines = (reports.parent / "decisions.jsonl").read_text().splitlines()
-    except OSError:
+    lines: list[str] = []
+    for path in _decision_files(cfg, reports.parent):
+        try:
+            lines += path.read_text().splitlines()
+        except OSError:
+            continue
+    lines = list(dict.fromkeys(lines))  # identical rows once
+    if not lines:
         return []
     report_dates = _index_dates(reports)
     out: list[Followup] = []
@@ -595,7 +612,7 @@ def build(cfg: learn_config.LearnConfig, end: date) -> Report:
 def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candidate]]:
     week = gather.gather(cfg, end)
     reports = learn_config.learn_dir(cfg) / "reports" if cfg.kb else None
-    decisions = reports.parent / "decisions.jsonl" if reports else Path("/nonexistent")
+    decisions = _decision_files(cfg, reports.parent) if reports else [Path("/nonexistent")]
     top = candidates.top_skills(week)
     cands, over, cand_errors = candidates.select(week, cfg, decisions)
     items, totals, rot_errors = rot.run_rot(week, cfg)

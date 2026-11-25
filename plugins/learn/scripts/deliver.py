@@ -110,7 +110,7 @@ def _delivery_worktree(cfg: learn_config.LearnConfig, day: str) -> Path:
         made = decide._git(kb, "worktree", "add", str(path), branch)
     else:
         made = decide._git(kb, "worktree", "add", "-b", branch, str(path),
-                           decide._default_branch(kb))
+                           decide._base_ref(kb))
     if made.returncode != 0:
         raise DeliverError("cannot create the delivery worktree: " + sanitize.line(made.stderr))
     return path

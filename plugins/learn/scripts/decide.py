@@ -125,29 +125,86 @@ def _default_branch(kb: Path) -> str:
     return name if out.returncode == 0 and name not in ("", "HEAD") else "main"
 
 
+def _base_ref(kb: Path) -> str:
+    """Where new learn branches start: `origin/<default>` when it exists, else the local branch.
+
+    Callers fetch first; with no remote or a failed fetch this falls back to the local branch.
+    """
+    name = _default_branch(kb)
+    remote = _git(kb, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{name}")
+    return f"origin/{name}" if remote.returncode == 0 else name
+
+
 def _has_remote(path: Path) -> bool:
     return bool(_git(path, "remote").stdout.strip())
 
 
 def _worktree(cfg: LearnConfig) -> Path:
-    """The `learn/decisions` worktree of the knowledge base; created once, then reused."""
+    """The `learn/decisions` worktree of the knowledge base; created once, then reused.
+
+    A reused worktree whose pull request is no longer open is reset to the fetched default
+    branch (carrying over any row not yet merged), so the next pull request cannot conflict."""
     if cfg.kb is None:
         raise DecideError(2, "kb is not configured")
     path = WORKTREE_ROOT / "learn-decisions"
-    if (path / ".git").exists():
-        return path
     if _has_remote(cfg.kb):
-        _git(cfg.kb, "fetch", "--quiet")
+        _git(cfg.kb, "fetch", "--quiet")  # a failed fetch falls back to local refs
+    if (path / ".git").exists():
+        _resync(cfg, path)
+        return path
     exists = _git(cfg.kb, "rev-parse", "--verify", "--quiet", f"refs/heads/{BRANCH}")
     path.parent.mkdir(parents=True, exist_ok=True)
     if exists.returncode == 0:
         made = _git(cfg.kb, "worktree", "add", str(path), BRANCH)
     else:
-        made = _git(cfg.kb, "worktree", "add", "-b", BRANCH, str(path), _default_branch(cfg.kb))
+        made = _git(cfg.kb, "worktree", "add", "-b", BRANCH, str(path), _base_ref(cfg.kb))
     if made.returncode != 0:
         raise DecideError(1, "cannot create the learn/decisions worktree: "
                              + sanitize.line(made.stderr))
+    if exists.returncode == 0:
+        _resync(cfg, path)
     return path
+
+
+def _open_pr(worktree: Path) -> bool | None:
+    """True when a `learn/decisions` PR is open, False when none is, None when gh cannot say."""
+    listed = _gh(["pr", "list", "--head", BRANCH, "--state", "open", "--json", "url",
+                  "--jq", ".[0].url"], worktree)
+    if listed.returncode != 0:
+        return None
+    return bool(listed.stdout.strip())
+
+
+def _resync(cfg: LearnConfig, path: Path) -> None:
+    """Start the branch over from the default branch once its pull request has gone."""
+    if not _has_remote(path) or _open_pr(path) is not False:
+        return
+    base = _base_ref(cfg.kb)
+    if not base.startswith("origin/"):
+        return
+    head = _git(path, "rev-parse", "HEAD").stdout.strip()
+    if head == _git(path, "rev-parse", base).stdout.strip():
+        return
+    log = path / cfg.kb_dir / "decisions.jsonl"
+    try:
+        local = log.read_text().splitlines()
+    except OSError:
+        local = []
+    if _git(path, "reset", "--hard", "--quiet", base).returncode != 0:
+        _warn("could not reset learn/decisions to " + base)
+        return
+    try:
+        merged = log.read_text().splitlines()
+    except OSError:
+        merged = []
+    missing = [row for row in local if row.strip() and row not in merged]
+    for row in missing:  # rows that never reached the default branch
+        try:
+            parsed = json.loads(row)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            _append(log, parsed)
 
 
 def _roots(cfg: LearnConfig, day: str) -> list[Path]:
@@ -282,6 +339,9 @@ def _publish(worktree: Path, rec_id: str, decision: str, log: Path) -> None:
     if not _has_remote(worktree):
         return
     pushed = _git(worktree, "push", "-u", "origin", BRANCH)
+    if pushed.returncode != 0 and _open_pr(worktree) is False:
+        # the old branch was merged and the worktree restarted from the default branch
+        pushed = _git(worktree, "push", "-u", "--force-with-lease", "origin", BRANCH)
     if pushed.returncode != 0:
         _warn("could not push learn/decisions: " + sanitize.line(pushed.stderr))
         return

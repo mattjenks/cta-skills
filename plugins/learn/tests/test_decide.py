@@ -324,10 +324,75 @@ def test_row_feeds_followups_and_suppression(env):
     row = env.rows()[0]
     assert row["signal"] == "cost_growth" and row["metric"] == "cost_ratio"
     assert row["value"] == 2.0
-    cfg = learn_config.LearnConfig(kb=env.worktree)
+    # the real layout: the report reads the live checkout, the row sits only on the worktree
+    assert not (env.kb / "learn" / "decisions.jsonl").exists()
+    cfg = learn_config.LearnConfig(kb=env.kb)
     week = Week(start=date(2026, 11, 23), end=date(2026, 11, 30))
-    got = report._followups(cfg, week, env.worktree / "learn" / "reports", date(2026, 11, 30))
+    got = report._followups(cfg, week, env.kb / "learn" / "reports", date(2026, 11, 30))
     assert [f.id for f in got] == [RID]
+
+
+def test_rejection_suppresses_from_the_worktree(env):
+    decide.decide(env.cfg, RID, "reject", "not now")
+    assert not (env.kb / "learn" / "decisions.jsonl").exists()
+    files = report._decision_files(learn_config.LearnConfig(kb=env.kb), env.kb / "learn")
+    assert candidates.suppressed(files) == {"alpha|cost_growth"}
+
+
+def _remote(env, tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True,
+                   capture_output=True)
+    git(env.kb, "remote", "add", "origin", str(remote))
+    git(env.kb, "push", "-u", "origin", "main")
+    git(env.kb, "remote", "set-head", "origin", "main")
+    return remote
+
+
+def _clone(tmp_path, remote, name):
+    clone = tmp_path / f"clone-{name}"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True,
+                   capture_output=True)
+    git(clone, "config", "user.name", "Learn Test")
+    git(clone, "config", "user.email", "learn-test@example.invalid")
+    git(clone, "config", "commit.gpgsign", "false")
+    return clone
+
+
+def test_new_worktree_is_cut_from_the_fetched_default_branch(env, tmp_path):
+    remote = _remote(env, tmp_path)
+    clone = _clone(tmp_path, remote, "a")
+    (clone / "elsewhere.txt").write_text("new on the remote\n")
+    git(clone, "add", "-A")
+    git(clone, "commit", "-m", "remote work")
+    git(clone, "push", "origin", "main")
+    decide.decide(env.cfg, RID, "defer", None)
+    assert (env.worktree / "elsewhere.txt").exists()
+
+
+def test_reused_worktree_is_reset_after_the_decisions_pr_merged(env, tmp_path):
+    remote = _remote(env, tmp_path)
+    decide.decide(env.cfg, RID, "defer", None)  # pushes learn/decisions, opens the PR
+    first = env.rows()[0]
+    # the PR is squash-merged: the default branch gets the row in a different commit
+    clone = _clone(tmp_path, remote, "b")
+    (clone / "learn").mkdir(exist_ok=True)
+    (clone / "learn" / "decisions.jsonl").write_text(json.dumps(first) + "\n")
+    git(clone, "add", "-A")
+    git(clone, "commit", "-m", "squash of the decisions PR")
+    git(clone, "push", "origin", "main")
+    (env.state / "pr").unlink()  # no open PR any more
+    rep = _report()
+    rep.recommendations.append(Recommendation(
+        "2026-11-23-R2", rep.recommendations[0].candidate, problem="p", why="w", change="c",
+        measure="m"))
+    env.write_report(rep)
+    decide.decide(env.cfg, "2026-11-23-R2", "defer", None)
+    ids = [r["id"] for r in env.rows()]
+    assert ids == [RID, "2026-11-23-R2"]  # no duplicate of the merged row
+    assert "squash of the decisions PR" in git(env.worktree, "log", "--format=%s")
+    assert git(remote, "show", "learn/decisions:learn/decisions.jsonl").count("\n") == 2
+    assert len(env.gh_calls("pr", "create")) == 2  # a fresh PR for the new branch state
 
 
 def test_pushes_and_opens_the_pr_once(env, tmp_path):

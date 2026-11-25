@@ -18,8 +18,8 @@ reply.
 Pick the date: the argument, else today. Never commit in the live checkout of the knowledge base (the `kb`
 in the CTA config). Work in a git worktree instead:
 
-1. In the knowledge base, fetch first when there is a remote. Then run
-   `git worktree add -b learn/report-<date> ~/.local/share/cta/kb-worktrees/learn-report-<date> <default branch>`
+1. In the knowledge base, fetch first when there is a remote (with none, or if the fetch fails, use the local default branch). Then run
+   `git worktree add -b learn/report-<date> ~/.local/share/cta/kb-worktrees/learn-report-<date> origin/<default branch>`
    (the `kbwork.py` pattern in the build plugin). If the worktree and branch already exist, reuse them. Never
    use `--force`.
 2. Make a scratch copy of the CTA config in a temp file (`mktemp`), with `kb` set to the worktree path

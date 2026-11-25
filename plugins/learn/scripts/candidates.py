@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 import signals
@@ -21,25 +22,29 @@ def top_skills(week: Week, n: int = TOP_SKILLS) -> list[SkillUsage]:
     return sorted(week.skills, key=lambda s: (-s.cost_usd, -(s.invocations or 0), s.skill))[:n]
 
 
-def suppressed(decisions_path: Path) -> set[str]:
-    """Fingerprints the owner rejected. A missing file or a bad line suppresses nothing."""
+def suppressed(decisions_path: Path | Iterable[Path]) -> set[str]:
+    """Fingerprints the owner rejected, from one log or the union of several.
+
+    A missing file or a bad line suppresses nothing."""
+    paths = [decisions_path] if isinstance(decisions_path, (str, Path)) else list(decisions_path)
     out: set[str] = set()
-    try:
-        text = Path(decisions_path).read_text()
-    except OSError:
-        return out
-    for raw in text.splitlines():
+    for one in paths:
         try:
-            row = json.loads(raw)
-        except ValueError:
+            text = Path(one).read_text()
+        except OSError:
             continue
-        if isinstance(row, dict) and row.get("decision") == "reject" and isinstance(
-                row.get("fingerprint"), str):
-            out.add(row["fingerprint"])
+        for raw in text.splitlines():
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and row.get("decision") == "reject" and isinstance(
+                    row.get("fingerprint"), str):
+                out.add(row["fingerprint"])
     return out
 
 
-def select(week: Week, cfg: LearnConfig, decisions_path: Path
+def select(week: Week, cfg: LearnConfig, decisions_path: Path | Iterable[Path]
            ) -> tuple[list[Candidate], list[Candidate], list[str]]:
     mods, errors = signals.discover()
     errors = list(errors)
