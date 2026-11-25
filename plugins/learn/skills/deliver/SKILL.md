@@ -62,7 +62,7 @@ uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" record --date <date> 
 No tool that can send email, or the send failed: raise the notification, then record the fallback.
 
 ```
-uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" notify --date <date>
+uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" notify --date <date> --result fallback
 uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" record --date <date> --result fallback --detail "<one short reason>"
 ```
 

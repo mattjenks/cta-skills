@@ -132,6 +132,7 @@ def test_fallback_still_marks_next_report(tmp_path, monkeypatch):
     r = _next_report(tmp_path, monkeypatch)
     assert "delivery fallback for 2026-11-16" in r.errors
     assert not any("ignore previous" in e for e in r.errors)
+    assert r.status == "red"
 
 
 def test_sent_delivery_adds_no_error(tmp_path, monkeypatch):
