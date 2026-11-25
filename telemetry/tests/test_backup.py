@@ -373,3 +373,15 @@ def test_local_reports_dir_follows_config(monkeypatch, tmp_path):
     for bad in ('"rel/x"', '"~/../x"', "5"):
         cfg.write_text(f"[learn]\nreports_dir = {bad}\n")
         assert backup_mod.local_reports_dir() == backup_mod.DEFAULT_REPORTS_DIR / "reports"
+
+
+@pytest.mark.parametrize("bad_index", ["not json", "[]", '{"date": "2026-02-01"}', '[{"date": "../x"}]'])
+def test_reports_backup_keeps_dest_when_index_unreadable(tmp_path, bad_index):
+    src, dest = tmp_path / "reports", tmp_path / "out"
+    make_reports(dest, ["2026-01-05"])  # a prior good backup, with its index
+    before = {p.name: p.read_text() for p in dest.iterdir()}
+    src.mkdir()
+    (src / "index.json").write_text(bad_index, encoding="utf-8")
+    (src / "2026-02-01.json").write_text("plain, not in the index")
+    assert backup_mod.backup_reports(src, dest) == 0
+    assert {p.name: p.read_text() for p in dest.iterdir()} == before

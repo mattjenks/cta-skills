@@ -10,7 +10,8 @@ Every copy goes to a temp file, is verified by size and SHA-256, then renamed in
 Then it mirrors the 5 newest learn reports to `<backup_dir>/../learn/reports`.
 The source is never modified or deleted. After a successful run only the newest
 LIVE_KEEP live snapshots (by date) are kept at the destination; rotated copies are never pruned.
-On any failure it exits 1 and, on macOS, raises a notification with the reason.
+On any failure it exits 1 and, on macOS, raises one notification with the reason(s), a
+reports-backup failure sharing it with a telemetry one.
 """
 import argparse
 import hashlib
@@ -141,7 +142,8 @@ def backup_reports(src: Path, dest: Path, keep: int = REPORTS_KEEP) -> int:
 
     Dates come from src/index.json and are used only when they are real YYYY-MM-DD dates;
     only regular, non-symlink files are copied. Report-named files at dest for other dates
-    are deleted; anything else at dest is left alone. A missing src is success.
+    are deleted; anything else at dest is left alone. A missing src is success. With no valid
+    date selected (missing, corrupt or empty index) nothing is copied or deleted.
     """
     if not src.is_dir():
         return 0
@@ -155,6 +157,8 @@ def backup_reports(src: Path, dest: Path, keep: int = REPORTS_KEEP) -> int:
         if _valid_report_date(d) and _is_plain_file(src / f"{d}.json"):
             found.add(d)
     dates = sorted(found, reverse=True)[:keep]
+    if not dates:  # unreadable or empty index: keep the existing backup untouched
+        return 0
     copied = 0
     pairs = [(src / f"{d}.{k}", dest / f"{d}.{k}") for d in dates for k in _REPORT_KINDS]
     pairs.append((src / "index.json", dest / "index.json"))
