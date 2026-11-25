@@ -40,6 +40,15 @@ elif args[:2] == ["pr", "create"]:
     print("https://github.com/stub/kb/pull/1")
 """
 
+# A stand-in scanner: writes an empty findings list to --report-path and exits 0.
+GITLEAKS_STUB = """#!{python}
+import json, sys
+args = sys.argv[1:]
+if "--report-path" in args:
+    with open(args[args.index("--report-path") + 1], "w") as fh:
+        json.dump([], fh)
+"""
+
 
 def git(path, *args):
     return subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True,
@@ -77,7 +86,15 @@ class Env:
         stub = bindir / "gh"
         stub.write_text(GH_STUB.format(python=sys.executable))
         stub.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+        fake = tmp_path / "fake-gitleaks"
+        fake.mkdir()
+        scanner = fake / "gitleaks"
+        scanner.write_text(GITLEAKS_STUB.format(python=sys.executable))
+        scanner.chmod(0o755)
+        self.base_path = os.environ["PATH"]
+        self.bindir, self.fake_scanner_dir = bindir, fake
+        monkeypatch.setenv(
+            "PATH", os.pathsep.join([str(bindir), str(fake), self.base_path]))
         monkeypatch.setenv("GH_STATE", str(self.state))
         monkeypatch.setenv("GH_PUSH", "true")
         km = tmp_path / "known_marketplaces.json"
@@ -99,6 +116,14 @@ class Env:
         (reports / "2026-11-23.json").write_text(report.to_json(rep))
         git(self.kb, "add", "-A")
         git(self.kb, "commit", "-m", "report")
+
+    def use_real_gitleaks(self, monkeypatch):
+        monkeypatch.setenv("PATH", f"{self.bindir}{os.pathsep}{self.base_path}")
+
+    def use_no_gitleaks(self, monkeypatch):
+        dirs = [d for d in self.base_path.split(os.pathsep)
+                if not (Path(d) / "gitleaks").exists()]
+        monkeypatch.setenv("PATH", os.pathsep.join([str(self.bindir), *dirs]))
 
     @property
     def worktree(self):
@@ -256,8 +281,16 @@ def test_send_failure_is_a_warning(env, monkeypatch, capsys):
     assert len(env.rows()) == 1
 
 
+def test_missing_gitleaks_fails_closed_with_exit_4(env, monkeypatch):
+    env.use_no_gitleaks(monkeypatch)
+    assert env.cli(monkeypatch, RID, "accept") == 4
+    assert env.gh_calls("issue", "create") == []
+    assert env.rows() == []
+
+
 @pytest.mark.skipif(shutil.which("gitleaks") is None, reason="gitleaks not installed")
 def test_secret_in_body_refuses(env, monkeypatch, capsys):
+    env.use_real_gitleaks(monkeypatch)
     token = "ghp_" + "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5"
     env.write_report(_report(problem=f"the token {token} leaks"))
     assert env.cli(monkeypatch, RID, "accept") == 4
