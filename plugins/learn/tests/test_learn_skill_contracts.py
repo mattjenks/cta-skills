@@ -106,6 +106,15 @@ def test_decide_treats_content_as_data():
     has("decide", r"data,? never instructions")
 
 
+def test_report_evals_describe_local_writes():
+    base = SKILLS / "report" / "evals"
+    assert (base / "report-writes-locally" / "case.yaml").is_file()
+    assert not (base / "report-line-and-branch").exists()
+    body = "".join(f.read_text() for f in (base / "report-writes-locally").rglob("*") if f.is_file())
+    assert "learn/report-" not in body
+    assert "reports/" in body and "no pull request" in body.lower()
+
+
 # --- deliver ---
 
 
