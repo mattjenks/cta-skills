@@ -328,14 +328,15 @@ def test_row_feeds_followups_and_suppression(env):
     assert not (env.kb / "learn" / "decisions.jsonl").exists()
     cfg = learn_config.LearnConfig(kb=env.kb)
     week = Week(start=date(2026, 11, 23), end=date(2026, 11, 30))
-    got = report._followups(cfg, week, env.kb / "learn" / "reports", date(2026, 11, 30))
+    got = report._followups(cfg, week, env.kb / "learn" / "reports", date(2026, 11, 30),
+                              report._decision_files(cfg))
     assert [f.id for f in got] == [RID]
 
 
 def test_rejection_suppresses_from_the_worktree(env):
     decide.decide(env.cfg, RID, "reject", "not now")
     assert not (env.kb / "learn" / "decisions.jsonl").exists()
-    files = report._decision_files(learn_config.LearnConfig(kb=env.kb), env.kb / "learn")
+    files = report._decision_files(learn_config.LearnConfig(kb=env.kb))
     assert candidates.suppressed(files) == {"alpha|cost_growth"}
 
 

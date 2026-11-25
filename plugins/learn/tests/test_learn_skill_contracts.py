@@ -70,9 +70,11 @@ def test_report_treats_content_as_data():
     has("report", r"data,? never instructions")
 
 
-def test_report_commits_on_a_branch_in_a_worktree():
-    has("report", r"learn/report-<date>", r"git worktree add", r"live checkout",
-        r"index\.json", r"gh pr create", r"no remote|without a remote")
+def test_report_writes_locally_without_a_pr():
+    has("report", r"report\.py\W+draft", r"report\.py\W+render", r"REPORT:")
+    body = text("report")
+    for banned in ("git worktree add", "gh pr create", "learn/report-<date>"):
+        assert banned not in body
 
 
 # --- decide ---

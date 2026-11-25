@@ -147,7 +147,13 @@ def test_fallback_recorded_shows_in_next_report(tmp_path, monkeypatch):
     monkeypatch.setattr(rot, "run_rot", lambda w, c: ({k: [] for k in KINDS},
                                                       {k: 0 for k in KINDS}, []))
     monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], [], []))
-    cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
+    local = tmp_path / "local" / "reports"  # report reads the local folder (deliver moves in Task 3)
+    local.mkdir(parents=True)
+    (local / "index.json").write_text(json.dumps([{"date": "2026-11-16"}]))
+    (local / "2026-11-16.delivery.json").write_text(
+        (wt_reports / "2026-11-16.delivery.json").read_text())
+    cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",),
+                                   reports_dir=tmp_path / "local")
     r = report.build(cfg, date(2026, 11, 23))
     assert "delivery fallback for 2026-11-16" in r.errors
     assert not any("ignore previous" in e for e in r.errors)
@@ -166,7 +172,8 @@ def test_sent_delivery_adds_no_error(tmp_path, monkeypatch):
     monkeypatch.setattr(rot, "run_rot", lambda w, c: ({k: [] for k in KINDS},
                                                       {k: 0 for k in KINDS}, []))
     monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], [], []))
-    cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
+    cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",),
+                                   reports_dir=tmp_path / "local")
     assert report.build(cfg, date(2026, 11, 23)).errors == []
 
 
@@ -221,28 +228,6 @@ def test_record_commit_failure_keeps_the_record(tmp_path, monkeypatch, capsys):
     assert "warning" in capsys.readouterr().err
     assert f"{DAY}.delivery.json" not in _git(kb, "log", "--all", "--name-only", "--format=%s")
 
-
-def test_fallback_in_previous_report_worktree_shows_in_next_report(tmp_path, monkeypatch):
-    prior = "2026-11-16"
-    root = tmp_path / "wt"
-    monkeypatch.setattr(decide, "WORKTREE_ROOT", root)
-    reports = root / f"learn-report-{prior}" / "learn" / "reports"
-    reports.mkdir(parents=True)
-    (reports / f"{prior}.delivery.json").write_text(json.dumps({"date": prior,
-                                                                "result": "fallback"}))
-    # the next build runs in a different folder whose index lists the prior date only
-    nxt = tmp_path / "kb" / "learn" / "reports"
-    nxt.mkdir(parents=True)
-    (nxt / "index.json").write_text(json.dumps([{"date": prior}]))
-    week = Week(start=date(2026, 11, 16), end=date(2026, 11, 23), skills=[])
-    week.freshness.update(prometheus="x", loki="x")
-    monkeypatch.setattr(gather, "gather", lambda cfg, end: week)
-    monkeypatch.setattr(rot, "run_rot", lambda w, c: ({k: [] for k in KINDS},
-                                                      {k: 0 for k in KINDS}, []))
-    monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], [], []))
-    cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
-    r = report.build(cfg, date(2026, 11, 23))
-    assert f"delivery fallback for {prior}" in r.errors
 
 
 # ---------------------------------------------------------------- never the live checkout

@@ -41,14 +41,16 @@ mod API.
 
 ## Where things live
 
-Under `<kb>/<kb_dir>/`, with `kb_dir` defaulting to `learn`:
+Reports stay on this machine, in `[learn] reports_dir` (default `~/.local/share/cta/learn`):
 
 | Path | Holds |
 |---|---|
 | `reports/<YYYY-MM-DD>.md`, `.json`, `.html` | The weekly report in three forms |
 | `reports/index.json` | The list of reports |
-| `decisions.jsonl` | One line per decision |
+| `reports/<YYYY-MM-DD>.delivery.json` | How the report was delivered |
 | `backlog.md` | Recommendations past the cap of five |
+
+Decisions stay in the knowledge base: `<kb>/<kb_dir>/decisions.jsonl`, one line per decision.
 
 ## Config
 
@@ -71,8 +73,9 @@ to = "you@example.com"
 
 | Key | Default | Meaning |
 |---|---|---|
-| `kb` (top level) | unset | Knowledge-base repo. The learn scripts refuse to write reports without it. |
-| `[learn] kb_dir` | `learn` | Folder under `kb` for reports, `decisions.jsonl` and `backlog.md`. Relative, no `..`. |
+| `kb` (top level) | unset | Knowledge-base repo. `report.py` needs it to read decisions and refuses to run without it. |
+| `[learn] kb_dir` | `learn` | Folder under `kb` for `decisions.jsonl`. Relative, no `..`. |
+| `[learn] reports_dir` | `~/.local/share/cta/learn` | Local folder for reports and `backlog.md`. Absolute or starting with `~/`, no `..`. |
 | `[learn] exclude_organization_ids` | `[]` | Work organization IDs. Their events are dropped before ranking. Replaces the old `organization_ids` key, which is now ignored with a note. |
 | `[learn] exclude_owners` | `[]` | Marketplace repo owners whose skills are left out of the report. |
 | `[learn] fallback_repo` | unset | `owner/name` repo where `learn:decide` files an issue when the skill's own repo is not writable. |
@@ -82,7 +85,7 @@ to = "you@example.com"
 | `[learn] otlp_url` | `http://127.0.0.1:4318` | OTLP endpoint that receives the `cta.learn.decision` event. |
 | `[learn] min_sessions` | `3` | Fewest sessions a skill needs to become a recommendation candidate. |
 | `[learn] followup_reports` | `4` | Reports a follow-up on a decision appears in before it ends. |
-| `[learn.delivery] to` | unset | The one address `learn:deliver` emails. `deliver` exits 2 while it is unset. |
+| `[learn.delivery] to` | unset | The one address `learn:deliver` emails. Optional: while it is unset, `deliver` raises a notification instead of sending mail. |
 | `[learn.delivery] channel` | `email` | Delivery channel. |
 | `[learn.delivery] format` | `html` | Delivery format. |
 | `projects` (top level) | `{}` | Repo path to slug table. The learn report scans each listed repo for broken skills and stale rules. |
