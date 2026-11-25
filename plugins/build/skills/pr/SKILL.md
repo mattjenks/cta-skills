@@ -64,8 +64,8 @@ closes false positives; this skill never writes `false-positive` or `accepted-ri
 3. Edit each PR body (`gh pr edit --body-file`) so each links the other. Report both URLs.
 4. Watch the code PR. When the desktop app's PR tools are available (`get_status`, `bind_pr`,
    `set_monitor`): read `get_status`; if the code PR is not bound to this session, bind it with
-   `bind_pr`. Then call `set_monitor` on it with `auto_fix: true`, `address_comments: true` and
-   `auto_archive_on_close: true`. This skill is the owner's standing request for these switches,
+   `bind_pr`. Then call `set_monitor` with the code PR's `url`, `auto_fix: true`,
+   `address_comments: true` and `auto_archive_on_close: true`. This skill is the owner's standing request for these switches,
    attended or unattended: do not ask about Auto-fix. Never set auto-merge;
    never bind or watch the knowledge-base PR. If the tools are missing, or the app refuses or no
    approval comes, say in the report that Auto-fix and archive-on-close are off and continue;

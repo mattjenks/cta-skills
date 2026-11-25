@@ -558,7 +558,8 @@ def test_pr_turns_on_auto_fix_and_archive_for_the_code_pr():
         r"never retry through another session", r"(missing|refuses)[^.]*continue")
     skill = (SKILLS / "pr/SKILL.md").read_text()
     sec4 = skill.split("\n## 4.")[1].split("\n## 5.")[0]
-    assert sec4.find("set_monitor") > sec4.find("gh pr create") > -1
+    assert sec4.find("set_monitor") > sec4.find("gh pr edit") > sec4.find("gh pr create") > -1
+    assert re.search(r"set_monitor` with the code PR's `url`", sec4)
 
 
 def test_review_pr_drafts_then_posts_after_confirmation():
