@@ -207,16 +207,13 @@ def _resync(cfg: LearnConfig, path: Path) -> None:
             _append(log, parsed)
 
 
-def _roots(cfg: LearnConfig, day: str) -> list[Path]:
-    """Places a report or the decisions log may live: the live checkout, then the worktrees."""
-    roots = [learn_config.learn_dir(cfg)]
-    for name in ("learn-decisions", f"learn-report-{day}"):
-        roots.append(WORKTREE_ROOT / name / cfg.kb_dir)
-    return roots
+def _roots(cfg: LearnConfig) -> list[Path]:
+    """Places the decisions log may live: the live checkout, then the learn/decisions worktree."""
+    return [learn_config.learn_dir(cfg), WORKTREE_ROOT / "learn-decisions" / cfg.kb_dir]
 
 
 def _find_row(cfg: LearnConfig, rec_id: str) -> dict | None:
-    for root in _roots(cfg, rec_id[:10]):
+    for root in _roots(cfg):
         try:
             lines = (root / "decisions.jsonl").read_text().splitlines()
         except OSError:
@@ -232,12 +229,11 @@ def _find_row(cfg: LearnConfig, rec_id: str) -> dict | None:
 
 
 def _load_report(cfg: LearnConfig, rec_id: str) -> report.Report:
-    for root in _roots(cfg, rec_id[:10]):
-        try:
-            return report.from_json((root / "reports" / f"{rec_id[:10]}.json").read_text())
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    raise DecideError(2, f"no report found for {rec_id[:10]}")
+    path = learn_config.reports_dir(cfg) / f"{rec_id[:10]}.json"
+    try:
+        return report.from_json(path.read_text())
+    except (OSError, ValueError, KeyError, TypeError):
+        raise DecideError(2, f"no report found for {rec_id[:10]}") from None
 
 
 # ---------------------------------------------------------------- repo and issue

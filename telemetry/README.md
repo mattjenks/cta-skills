@@ -135,6 +135,14 @@ are kept at the destination; rotated copies are never pruned. With nothing to co
 exits 1, prints the cause (including any problem reading `config.toml`) to stderr, and raises a
 macOS notification "CTA telemetry backup failed: <reason>".
 
+**Learn reports:** after the telemetry copy the same run mirrors the 5 newest weekly learn reports
+(`<date>.json`, `.md`, `.html`, `.delivery.json`, plus `index.json`) from the local reports folder
+(`[learn] reports_dir`, default `~/.local/share/cta/learn/reports`) to `learn/reports/` beside
+`backup_dir` (for `~/Backups/CTA/telemetry`, that is `~/Backups/CTA/learn/reports`). Dates come from
+`index.json` and must be real `YYYY-MM-DD` dates; symlinks are never copied. Report-named files at the
+destination for older dates are deleted; other files there are left alone. A missing local folder is
+success. A failure here notifies but never stops the telemetry copy or its pruning, and the run exits 1.
+
 **Restore:** the files are plain JSONL (OTLP JSON from the collector's file exporter). Copy the
 needed `otel-*.jsonl` / `otel-live-*.jsonl` files from the backup folder back into
 `~/.local/share/cta/telemetry/archive/` for reference or `jq` analysis. Re-ingesting into Loki or

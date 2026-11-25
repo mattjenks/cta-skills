@@ -7,6 +7,9 @@
 One `Report` object, three views. Every external string passes through one escape helper
 (`_esc`); the only link is the Grafana URL from config. Missing data is printed as missing,
 never as zero.
+
+Reports are written to the local folder (`[learn] reports_dir`, default `~/.local/share/cta/learn`),
+not to the knowledge base; only `decisions.jsonl` is read from the knowledge base.
 """
 
 from __future__ import annotations
@@ -278,7 +281,7 @@ def from_json(text: str) -> Report:
 # ---------------------------------------------------------------- CLI
 
 def _reports_dir(cfg: learn_config.LearnConfig) -> Path:
-    return learn_config.learn_dir(cfg) / "reports"
+    return learn_config.reports_dir(cfg)
 
 
 def _empty_prose(r: Report) -> list[str]:
@@ -429,27 +432,15 @@ def _previous_report(reports: Path, end: date) -> Report | None:
     return None
 
 
-def _delivery_errors(reports: Path, end: date, cfg: learn_config.LearnConfig | None = None) -> list[str]:
-    """A Run errors line when the previous report fell back to a notification. Date only.
-
-    The record is looked up in this reports folder, then in the previous date's report worktree
-    (its pull request may not be merged yet), then its delivery worktree.
-    """
+def _delivery_errors(reports: Path, end: date) -> list[str]:
+    """A Run errors line when the previous report fell back to a notification. Date only."""
     prior = sorted((d for d in _index_dates(reports) if d < end.isoformat()), reverse=True)
     if not prior:
         return []
-    places = [reports]
-    if cfg is not None:
-        import decide  # deferred: decide imports this module
-        for name in (f"learn-report-{prior[0]}", f"learn-delivery-{prior[0]}"):
-            places.append(decide.WORKTREE_ROOT / name / cfg.kb_dir / "reports")
-    row = None
-    for place in places:
-        try:
-            row = json.loads((place / f"{prior[0]}.delivery.json").read_text())
-            break
-        except (OSError, ValueError):
-            continue
+    try:
+        row = json.loads((reports / f"{prior[0]}.delivery.json").read_text())
+    except (OSError, ValueError):
+        return []
     if isinstance(row, dict) and row.get("result") == "fallback":
         return [f"delivery fallback for {prior[0]}"]
     return []
@@ -492,21 +483,22 @@ def _moved(before: float, now: float | None, week: Week, skill: str) -> str:
     return "better" if now < before else "worse"  # every signal so far: lower is better
 
 
-def _decision_files(cfg, learn_dir: Path) -> list[Path]:
+def _decision_files(cfg) -> list[Path]:
     """The decisions log in the checkout, then the one on the `learn/decisions` worktree.
 
     A decision is written to the worktree first; it is in the checkout only after its pull
     request merges and the checkout is updated.
     """
     import decide  # deferred: decide imports this module
-    files = [learn_dir / "decisions.jsonl"]
+    files = [learn_config.learn_dir(cfg) / "decisions.jsonl"]
     files.append(decide.WORKTREE_ROOT / "learn-decisions" / cfg.kb_dir / "decisions.jsonl")
     return files
 
 
-def _followups(cfg, week: Week, reports: Path, end: date) -> list[Followup]:
+def _followups(cfg, week: Week, reports: Path, end: date,
+               decision_files: list[Path]) -> list[Followup]:
     lines: list[str] = []
-    for path in _decision_files(cfg, reports.parent):
+    for path in decision_files:
         try:
             lines += path.read_text().splitlines()
         except OSError:
@@ -611,8 +603,8 @@ def build(cfg: learn_config.LearnConfig, end: date) -> Report:
 
 def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candidate]]:
     week = gather.gather(cfg, end)
-    reports = learn_config.learn_dir(cfg) / "reports" if cfg.kb else None
-    decisions = _decision_files(cfg, reports.parent) if reports else [Path("/nonexistent")]
+    reports = learn_config.reports_dir(cfg)
+    decisions = _decision_files(cfg) if cfg.kb else [Path("/nonexistent")]
     top = candidates.top_skills(week)
     cands, over, cand_errors = candidates.select(week, cfg, decisions)
     items, totals, rot_errors = rot.run_rot(week, cfg)
@@ -620,14 +612,13 @@ def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candi
     errors = list(week.errors) + list(cand_errors) + list(rot_errors)
     errors += [f"config: {n}" for n in cfg.notes]
     errors += [f"{src} unreachable" for src in week.missing]
-    if reports:
-        errors += _delivery_errors(reports, end, cfg)
+    errors += _delivery_errors(reports, end)
     problems = [e for e in errors if not e.startswith("config: config renamed:")]
     if not cfg.exclude_organization_ids:
         errors.append(NO_EXCLUDE_NOTE)  # a note: it does not turn the status red
 
-    new_rot = _new_rot(items, _previous_report(reports, end)) if reports else 0
-    followups = _followups(cfg, week, reports, end) if reports else []
+    new_rot = _new_rot(items, _previous_report(reports, end))
+    followups = _followups(cfg, week, reports, end, decisions) if cfg.kb else []
     recs = [Recommendation(id=f"{end.isoformat()}-R{n}", candidate=c)
             for n, c in enumerate(cands, 1)]
     worse = [f for f in followups if f.moved == "worse"]

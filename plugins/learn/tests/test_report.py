@@ -54,6 +54,7 @@ def _headings(md):
 
 def _cfg(tmp_path, **kw):
     kw.setdefault("exclude_organization_ids", ("org-work",))
+    kw.setdefault("reports_dir", tmp_path / "local")
     return learn_config.LearnConfig(kb=tmp_path, **kw)
 
 
@@ -135,7 +136,7 @@ def test_html_escapes_names():
 
 
 def _write_draft(tmp_path, r):
-    path = tmp_path / "learn" / "reports" / f"{r.date}.json"
+    path = tmp_path / "local" / "reports" / f"{r.date}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(report.to_json(r))
     return path
@@ -143,7 +144,7 @@ def _write_draft(tmp_path, r):
 
 def _config(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text(f'kb = "{tmp_path}"\n')
+    path.write_text(f'kb = "{tmp_path}"\n[learn]\nreports_dir = "{tmp_path / "local"}"\n')
     return path
 
 
@@ -154,7 +155,7 @@ def test_render_refuses_empty_prose(tmp_path, capsys):
     assert code == 2
     err = capsys.readouterr().err
     assert "R2.why" in err and "R1" not in err
-    assert not (tmp_path / "learn" / "reports" / "2026-11-23.md").exists()
+    assert not (tmp_path / "local" / "reports" / "2026-11-23.md").exists()
 
 
 def test_md_html_json_agree(tmp_path):
@@ -175,7 +176,7 @@ def test_index_newest_first_capped(tmp_path):
         d = date.fromordinal(date(2025, 1, 1).toordinal() + i * 7)
         _write_draft(tmp_path, _report(date=d.isoformat()))
         assert report.main(["render", "--date", d.isoformat(), "--config", str(cfgp)]) == 0
-    index = json.loads((tmp_path / "learn" / "reports" / "index.json").read_text())
+    index = json.loads((tmp_path / "local" / "reports" / "index.json").read_text())
     assert len(index) == 52
     dates = [e["date"] for e in index]
     assert dates == sorted(dates, reverse=True)
@@ -204,7 +205,7 @@ def _stub(monkeypatch, week, rot_items=None, cands=()):
 
 
 def _save_previous(tmp_path, date_str, items):
-    rep = tmp_path / "learn" / "reports"
+    rep = tmp_path / "local" / "reports"
     rep.mkdir(parents=True, exist_ok=True)
     prev = _report(date=date_str, rot={"broken": items, "stale": [], "permission": []},
                    rot_totals={"broken": len(items), "stale": 0, "permission": 0})
@@ -238,7 +239,7 @@ def test_build_missing_source_is_red(tmp_path, monkeypatch):
 
 def test_no_excluded_orgs_noted(tmp_path, monkeypatch):
     _stub(monkeypatch, _fresh_week())
-    r = report.build(learn_config.LearnConfig(kb=tmp_path), END)
+    r = report.build(_cfg(tmp_path, exclude_organization_ids=()), END)
     assert "no excluded organizations configured" in r.errors
     assert r.status == "green"
     assert "no excluded organizations configured" in report.render_md(r)
@@ -288,7 +289,7 @@ def test_followup_tracks_accepted_then_ends(tmp_path, monkeypatch):
     _decisions(tmp_path, _accepted("2026-11-09-R1", "2026-11-09"),
                {**_accepted("2026-11-02-R1", "2026-11-02"), "decision": "defer"})
     # one report between the decision and now: this is the second report since
-    rep = tmp_path / "learn" / "reports"
+    rep = tmp_path / "local" / "reports"
     rep.mkdir(parents=True)
     (rep / "index.json").write_text(json.dumps([{"date": "2026-11-16"}]))
     _stub(monkeypatch, _fresh_week([_skill()]), cands=[])
@@ -334,7 +335,7 @@ def test_builds_summarize_the_week(tmp_path, monkeypatch):
 def test_draft_cli_writes_json(tmp_path, monkeypatch, capsys):
     _stub(monkeypatch, _fresh_week([_skill()]), cands=[_cand()])
     assert report.main(["draft", "--end", "2026-11-23", "--config", str(_config(tmp_path))]) == 0
-    path = tmp_path / "learn" / "reports" / "2026-11-23.json"
+    path = tmp_path / "local" / "reports" / "2026-11-23.json"
     assert capsys.readouterr().out.strip() == str(path)
     data = json.loads(path.read_text())
     assert data["recommendations"][0]["why"] == ""
@@ -349,7 +350,7 @@ def test_render_rejects_tampered_date(tmp_path, capsys):
     code = report.main(["render", "--date", "2026-11-23", "--config", str(_config(tmp_path))])
     assert code == 2
     assert "date" in capsys.readouterr().err
-    assert not (tmp_path / "learn" / "reports" / "2026-11-23.md").exists()
+    assert not (tmp_path / "local" / "reports" / "2026-11-23.md").exists()
     assert not (tmp_path / "x.md").exists() and not (tmp_path / "learn" / "x.md").exists()
 
 
@@ -359,15 +360,15 @@ def _overflow(n):
                       panel="p") for i in range(n)]
 
 
-def _draft(tmp_path, monkeypatch, over):
+def _draft(tmp_path, monkeypatch, over, cfgp=None):
     _stub(monkeypatch, _fresh_week([_skill()]))
     monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], list(over), []))
-    return report.main(["draft", "--end", "2026-11-23", "--config", str(_config(tmp_path))])
+    return report.main(["draft", "--end", "2026-11-23", "--config", str(cfgp or _config(tmp_path))])
 
 
 def test_draft_appends_overflow_to_backlog(tmp_path, monkeypatch):
     assert _draft(tmp_path, monkeypatch, _overflow(2)) == 0
-    text = (tmp_path / "learn" / "backlog.md").read_text()
+    text = (tmp_path / "local" / "backlog.md").read_text()
     assert text.startswith("# Backlog")
     assert "- 2026-11-23 skill0: cost\\_growth (skill0\\|cost\\_growth)" in text
     assert "skill1" in text
@@ -376,7 +377,7 @@ def test_draft_appends_overflow_to_backlog(tmp_path, monkeypatch):
 def test_backlog_overflow_not_duplicated(tmp_path, monkeypatch):
     assert _draft(tmp_path, monkeypatch, _overflow(1)) == 0
     assert _draft(tmp_path, monkeypatch, _overflow(2)) == 0
-    text = (tmp_path / "learn" / "backlog.md").read_text()
+    text = (tmp_path / "local" / "backlog.md").read_text()
     assert text.count("skill0") == 2  # skill and fingerprint of one line
     assert text.count("skill1") == 2
 
@@ -432,22 +433,74 @@ def test_config_rename_note_not_red(tmp_path, monkeypatch):
     assert bad.status == "red"
 
 
-def test_fallback_in_previous_delivery_worktree_shows_in_next_report(tmp_path, monkeypatch):
+def _prior_delivery(tmp_path, result, prior="2026-11-16"):
+    reports = tmp_path / "local" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / f"{prior}.delivery.json").write_text(json.dumps({"date": prior, "result": result}))
+    (reports / "index.json").write_text(json.dumps([{"date": prior}]))
+
+
+def test_skipped_delivery_adds_no_error(tmp_path, monkeypatch):
+    _prior_delivery(tmp_path, "skipped")
+    _stub(monkeypatch, _fresh_week())
+    r = report.build(_cfg(tmp_path), END)
+    assert not [e for e in r.errors if "delivery" in e]
+
+
+def test_fallback_delivery_adds_error(tmp_path, monkeypatch):
+    _prior_delivery(tmp_path, "fallback")
+    _stub(monkeypatch, _fresh_week())
+    r = report.build(_cfg(tmp_path), END)
+    assert "delivery fallback for 2026-11-16" in r.errors
+
+
+def test_report_ignores_old_report_worktree(tmp_path, monkeypatch):
     import decide
     prior = "2026-11-16"
-    root = tmp_path / "wt"
-    monkeypatch.setattr(decide, "WORKTREE_ROOT", root)
-    reports = root / f"learn-delivery-{prior}" / "learn" / "reports"
+    old = decide.WORKTREE_ROOT / f"learn-report-{prior}" / "learn" / "reports"
+    old.mkdir(parents=True)
+    (old / f"{prior}.delivery.json").write_text(json.dumps({"date": prior, "result": "fallback"}))
+    reports = tmp_path / "local" / "reports"
     reports.mkdir(parents=True)
-    (reports / f"{prior}.delivery.json").write_text(
-        json.dumps({"date": prior, "result": "fallback"}))
-    nxt = tmp_path / "kb" / "learn" / "reports"
-    nxt.mkdir(parents=True)
-    (nxt / "index.json").write_text(json.dumps([{"date": prior}]))
+    (reports / "index.json").write_text(json.dumps([{"date": prior}]))
     _stub(monkeypatch, _fresh_week())
-    cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",))
-    r = report.build(cfg, END)
-    assert f"delivery fallback for {prior}" in r.errors
+    r = report.build(_cfg(tmp_path), END)
+    assert not [e for e in r.errors if "delivery" in e]
+
+
+def test_draft_and_render_write_to_reports_dir(tmp_path, monkeypatch, capsys):
+    kb = tmp_path / "kb"
+    kb.mkdir()
+    local = tmp_path / "elsewhere"
+    cfgp = tmp_path / "c.toml"
+    cfgp.write_text(f'kb = "{kb}"\n[learn]\nreports_dir = "{local}"\n')
+    assert _draft(tmp_path, monkeypatch, _overflow(1), cfgp) == 0
+    path = local / "reports" / "2026-11-23.json"
+    assert path.exists() and (local / "backlog.md").exists()
+    path.write_text(report.to_json(_report()))
+    capsys.readouterr()
+    assert report.main(["render", "--date", "2026-11-23", "--config", str(cfgp)]) == 0
+    assert capsys.readouterr().out.strip() == str(local / "reports" / "2026-11-23.md")
+    for name in ("2026-11-23.md", "2026-11-23.html", "index.json"):
+        assert (local / "reports" / name).exists()
+    assert not (kb / "learn").exists()
+
+
+def test_followups_read_decisions_from_kb_not_reports_dir(tmp_path, monkeypatch):
+    _stub(monkeypatch, _growing_week(), cands=[])
+    cfg = _cfg(tmp_path)
+    (tmp_path / "local").mkdir()
+    (tmp_path / "local" / "decisions.jsonl").write_text(
+        json.dumps(_accepted("2026-11-16-R1", "2026-11-16")) + "\n")
+    assert report.build(cfg, END).followups == []
+    _decisions(tmp_path, _accepted("2026-11-09-R1", "2026-11-09"))
+    assert [f.id for f in report.build(cfg, END).followups] == ["2026-11-09-R1"]
+
+
+def test_html_has_cta_reports_reminder():
+    page = report.render_html(_report())
+    assert ('<p class="decide">Open <code>/cta-reports</code> in Claude Code to decide '
+            'these recommendations.</p>') in page
 
 
 def test_loki_down_top_table_says_no_data_not_zero():

@@ -27,11 +27,10 @@ performed, and records your decision on each recommendation in it.
 |---|---|
 | `learn:report` | Drafts the report from telemetry, writes the prose for each recommendation, renders markdown, HTML and JSON, and opens a knowledge-base PR. Takes an optional date. |
 | `learn:decide` | Records accept, defer or reject for a recommendation ID such as `2026-11-23-R2`. Accept files a GitHub issue; a reject needs a reason and is remembered so the idea is not suggested again. Deciding the same ID twice shows the first decision and changes nothing. |
-| `learn:deliver` | Emails the report to the configured address. With no mail tool connected, or on a failed send, it raises a notification that points at the markdown file. The result is recorded and the next report lists a fallback under Run errors. |
+| `learn:deliver` | Optionally emails the report to the configured address. With no address it raises a notification (`skipped`); with no mail tool, or on a failed send, it raises one too (`fallback`). Both point at `/cta-reports`. The result is recorded locally and the next report lists a fallback under Run errors. |
 | `learn:schedule` | Creates or updates the desktop scheduled task `cta-weekly-report`, Mondays 07:00 local time, which runs `learn:report` then `learn:deliver`. Safe to run again. |
 
-`learn:report`, `learn:decide` and `learn:deliver` never write in the live knowledge-base checkout.
-They work in git worktrees on `learn/...` branches and open pull requests.
+`learn:report` and `learn:deliver` write only to the local reports folder and run no git. `learn:decide` never writes in the live knowledge-base checkout: it works in a git worktree and opens a pull request.
 
 ## The `/cta-reports` pane
 
@@ -41,14 +40,16 @@ mod API.
 
 ## Where things live
 
-Under `<kb>/<kb_dir>/`, with `kb_dir` defaulting to `learn`:
+Reports stay on this machine, in `[learn] reports_dir` (default `~/.local/share/cta/learn`):
 
 | Path | Holds |
 |---|---|
 | `reports/<YYYY-MM-DD>.md`, `.json`, `.html` | The weekly report in three forms |
 | `reports/index.json` | The list of reports |
-| `decisions.jsonl` | One line per decision |
+| `reports/<YYYY-MM-DD>.delivery.json` | How the report was delivered |
 | `backlog.md` | Recommendations past the cap of five |
+
+Decisions stay in the knowledge base: `<kb>/<kb_dir>/decisions.jsonl`, one line per decision.
 
 ## Config
 
@@ -71,8 +72,9 @@ to = "you@example.com"
 
 | Key | Default | Meaning |
 |---|---|---|
-| `kb` (top level) | unset | Knowledge-base repo. The learn scripts refuse to write reports without it. |
-| `[learn] kb_dir` | `learn` | Folder under `kb` for reports, `decisions.jsonl` and `backlog.md`. Relative, no `..`. |
+| `kb` (top level) | unset | Knowledge-base repo. `report.py` needs it to read decisions and refuses to run without it. |
+| `[learn] kb_dir` | `learn` | Folder under `kb` for `decisions.jsonl`. Relative, no `..`. |
+| `[learn] reports_dir` | `~/.local/share/cta/learn` | Local folder for reports and `backlog.md`. Absolute or starting with `~/`, no `..`. |
 | `[learn] exclude_organization_ids` | `[]` | Work organization IDs. Their events are dropped before ranking. Replaces the old `organization_ids` key, which is now ignored with a note. |
 | `[learn] exclude_owners` | `[]` | Marketplace repo owners whose skills are left out of the report. |
 | `[learn] fallback_repo` | unset | `owner/name` repo where `learn:decide` files an issue when the skill's own repo is not writable. |
@@ -82,7 +84,7 @@ to = "you@example.com"
 | `[learn] otlp_url` | `http://127.0.0.1:4318` | OTLP endpoint that receives the `cta.learn.decision` event. |
 | `[learn] min_sessions` | `3` | Fewest sessions a skill needs to become a recommendation candidate. |
 | `[learn] followup_reports` | `4` | Reports a follow-up on a decision appears in before it ends. |
-| `[learn.delivery] to` | unset | The one address `learn:deliver` emails. `deliver` exits 2 while it is unset. |
+| `[learn.delivery] to` | unset | The one address `learn:deliver` emails. Optional: while it is unset, `deliver` raises a notification instead of sending mail. |
 | `[learn.delivery] channel` | `email` | Delivery channel. |
 | `[learn.delivery] format` | `html` | Delivery format. |
 | `projects` (top level) | `{}` | Repo path to slug table. The learn report scans each listed repo for broken skills and stale rules. |

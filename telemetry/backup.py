@@ -7,18 +7,22 @@
 Copies rotated archive files (mtime date <= day) not yet at the destination, plus a dated
 snapshot of the live otel.jsonl (`otel-live-<day>.jsonl`, replaced on same-day re-run).
 Every copy goes to a temp file, is verified by size and SHA-256, then renamed into place.
+Then it mirrors the 5 newest learn reports to `<backup_dir>/../learn/reports`.
 The source is never modified or deleted. After a successful run only the newest
 LIVE_KEEP live snapshots (by date) are kept at the destination; rotated copies are never pruned.
-On any failure it exits 1 and, on macOS, raises a notification with the reason.
+On any failure it exits 1 and, on macOS, raises one notification with the reason(s), a
+reports-backup failure sharing it with a telemetry one.
 """
 import argparse
 import hashlib
+import json
 import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from datetime import date, datetime
 from pathlib import Path
 
@@ -26,6 +30,11 @@ HOOKS = Path(__file__).resolve().parent.parent / "plugins" / "core" / "hooks"
 ARCHIVE = Path(os.environ.get("CTA_DATA", Path.home() / ".local/share/cta/telemetry")) / "archive"
 LIVE_KEEP = 7
 _LIVE_SNAPSHOT = re.compile(r"otel-live-(\d{4}-\d{2}-\d{2})\.jsonl")
+REPORTS_KEEP = 5
+DEFAULT_REPORTS_DIR = Path.home() / ".local/share/cta/learn"
+_REPORT_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_REPORT_FILE = re.compile(r"(\d{4}-\d{2}-\d{2})\.(?:json|md|html|delivery\.json)")
+_REPORT_KINDS = ("json", "md", "html", "delivery.json")
 
 
 class BackupError(Exception):
@@ -106,6 +115,94 @@ def prune_live_snapshots(dest: Path, keep: int = LIVE_KEEP) -> None:
         path.unlink(missing_ok=True)
 
 
+def _valid_report_date(value: object) -> bool:
+    if not isinstance(value, str) or not _REPORT_DATE.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_plain_file(p: Path) -> bool:
+    return not p.is_symlink() and p.is_file()
+
+
+def _copy_if_changed(src: Path, target: Path) -> bool:
+    if (_is_plain_file(target) and target.stat().st_size == src.stat().st_size
+            and sha256(target) == sha256(src)):
+        return False
+    _copy_verified(src, target)
+    return True
+
+
+def backup_reports(src: Path, dest: Path, keep: int = REPORTS_KEEP) -> int:
+    """Mirror the `keep` newest learn reports (and index.json) to dest. Returns files copied.
+
+    Dates come from src/index.json and are used only when they are real YYYY-MM-DD dates;
+    only regular, non-symlink files are copied. Once `keep` dates are found locally,
+    report-named files at dest dated before the oldest of them are deleted; with fewer, nothing
+    is deleted. Anything else at dest is left alone. A missing src is success. With no valid
+    date selected (missing, corrupt or empty index) nothing is copied or deleted.
+    """
+    if not src.is_dir():
+        return 0
+    try:
+        entries = json.loads((src / "index.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        entries = []
+    found = set()
+    for e in entries if isinstance(entries, list) else []:
+        d = e.get("date") if isinstance(e, dict) else None
+        if _valid_report_date(d) and _is_plain_file(src / f"{d}.json"):
+            found.add(d)
+    dates = sorted(found, reverse=True)[:keep]
+    if not dates:  # unreadable or empty index: keep the existing backup untouched
+        return 0
+    copied = 0
+    pairs = [(src / f"{d}.{k}", dest / f"{d}.{k}") for d in dates for k in _REPORT_KINDS]
+    pairs.append((src / "index.json", dest / "index.json"))
+    for s_path, target in pairs:
+        if not _is_plain_file(s_path):
+            continue
+        dest.mkdir(parents=True, exist_ok=True)
+        copied += _copy_if_changed(s_path, target)
+    # Prune only with a full set locally, and only dates older than the oldest kept: a reset or
+    # partly empty local folder (new Mac, changed reports_dir) never wipes the backed-up history.
+    if len(dates) >= keep and dest.is_dir():
+        oldest = min(dates)
+        for p in dest.iterdir():
+            m = _REPORT_FILE.fullmatch(p.name)
+            if m and m.group(1) < oldest:
+                p.unlink(missing_ok=True)
+    return copied
+
+
+def local_reports_dir() -> Path:
+    """`<[learn] reports_dir>/reports`, with the same rules as the learn plugin's config."""
+    sys.path.insert(0, str(HOOKS))
+    import cta_config
+
+    override = os.environ.get("CTA_CONFIG")
+    path = Path(override) if override else cta_config.DEFAULT_CONFIG_PATH
+    try:
+        with open(path, "rb") as fh:
+            section = tomllib.load(fh).get("learn")
+    except (OSError, ValueError):
+        section = None
+    root = DEFAULT_REPORTS_DIR
+    value = section.get("reports_dir") if isinstance(section, dict) else None
+    if isinstance(value, str) and value.strip():
+        try:
+            cand = Path(value).expanduser()
+        except (RuntimeError, ValueError):
+            cand = None
+        if cand is not None and cand.is_absolute() and ".." not in cand.parts:
+            root = cand
+    return root / "reports"
+
+
 def configured_dest() -> Path | None:
     sys.path.insert(0, str(HOOKS))
     from cta_config import load_config
@@ -134,12 +231,20 @@ def _run_backup(day: date | None) -> str | None:
     dest = configured_dest()
     if dest is None:
         return "backup_dir not configured"
+    reasons = []
     try:
         n = backup(ARCHIVE, dest, day or date.today())
+        print(f"backed up {n} file(s) to {dest}" if n else "nothing to back up")
     except (BackupError, OSError) as exc:
-        return str(exc)
-    print(f"backed up {n} file(s) to {dest}" if n else "nothing to back up")
-    return None
+        reasons.append(str(exc))
+    reports_dest = dest.parent / "learn" / "reports"
+    try:  # a reports failure never stops the telemetry backup, which has already run
+        r = backup_reports(local_reports_dir(), reports_dest)
+        if r:
+            print(f"backed up {r} report file(s) to {reports_dest}")
+    except Exception as exc:
+        reasons.append(f"reports backup failed: {type(exc).__name__}: {exc}")
+    return "; ".join(reasons) or None
 
 
 def main(argv: list[str] | None = None, run=subprocess.run) -> int:

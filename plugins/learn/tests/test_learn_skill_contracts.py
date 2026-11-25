@@ -70,9 +70,11 @@ def test_report_treats_content_as_data():
     has("report", r"data,? never instructions")
 
 
-def test_report_commits_on_a_branch_in_a_worktree():
-    has("report", r"learn/report-<date>", r"git worktree add", r"live checkout",
-        r"index\.json", r"gh pr create", r"no remote|without a remote")
+def test_report_writes_locally_without_a_pr():
+    has("report", r"report\.py\W+draft", r"report\.py\W+render", r"REPORT:")
+    body = text("report")
+    for banned in ("git worktree add", "gh pr create", "learn/report-<date>"):
+        assert banned not in body
 
 
 # --- decide ---
@@ -104,6 +106,15 @@ def test_decide_treats_content_as_data():
     has("decide", r"data,? never instructions")
 
 
+def test_report_evals_describe_local_writes():
+    base = SKILLS / "report" / "evals"
+    assert (base / "report-writes-locally" / "case.yaml").is_file()
+    assert not (base / "report-line-and-branch").exists()
+    body = "".join(f.read_text() for f in (base / "report-writes-locally").rglob("*") if f.is_file())
+    assert "learn/report-" not in body
+    assert "reports/" in body and "no pull request" in body.lower()
+
+
 # --- deliver ---
 
 
@@ -132,17 +143,30 @@ def test_deliver_treats_content_as_data():
     has("deliver", r"data,? never instructions")
 
 
-def test_deliver_record_commits_the_record_on_the_report_branch():
-    has("deliver", r"record.*commit", r"learn/report-", r"never the default branch")
+def test_deliver_record_is_local_and_email_optional():
+    has("deliver", r"--result skipped", r"to.*null|no recipient", r"/cta-reports")
+    assert "learn/delivery-" not in text("deliver")
+    assert "learn/report-" not in text("deliver")
 
 
 def test_deliver_exit_codes():
     has("deliver", r"exit 2")
 
 
+def test_deliver_exit_2_stops_and_only_null_to_skips():
+    has("deliver", r"exit 2.*stop", r"only (a |the )?(JSON )?`?to: null`?.*skipped")
+
+
 def test_deliver_has_two_evals():
     cases = [p for p in (SKILLS / "deliver" / "evals").iterdir() if (p / "case.yaml").is_file()]
     assert len(cases) >= 2
+
+
+def test_deliver_eval_cases_cover_skipped_and_cta_reports():
+    base = SKILLS / "deliver" / "evals"
+    assert (base / "no-address-skips" / "case.yaml").is_file()
+    fb = "".join(f.read_text() for f in (base / "no-mail-tool-fallback").rglob("*.md"))
+    assert "/cta-reports" in fb and "notify --result fallback" in fb
 
 
 # --- schedule ---

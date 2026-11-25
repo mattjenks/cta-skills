@@ -29,6 +29,7 @@ def _load_hooks_config():
 cta_config = _load_hooks_config()
 
 FALLBACK_REPO = re.compile(r"[\w.-]+/[\w.-]+")
+DEFAULT_REPORTS_DIR = Path.home() / ".local/share/cta/learn"
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class LearnConfig:
     followup_reports: int = 4
     repos: tuple[Path, ...] = ()
     delivery: Delivery = Delivery(None)
+    reports_dir: Path = DEFAULT_REPORTS_DIR
     notes: tuple[str, ...] = ()
 
 
@@ -96,6 +98,22 @@ def _url(section: dict, key: str, default: str, notes: list[str]) -> str:
         return value
     notes.append(f"config invalid: learn.{key}: must be an http(s) URL")
     return default
+
+
+def _reports_dir(section: dict, notes: list[str]) -> Path:
+    """`[learn] reports_dir`: an absolute folder after `~` expansion, with no '..' part."""
+    if "reports_dir" not in section:
+        return DEFAULT_REPORTS_DIR
+    value = section["reports_dir"]
+    if isinstance(value, str) and value.strip():
+        try:
+            path = Path(value).expanduser()
+        except (RuntimeError, ValueError):
+            path = None
+        if path is not None and path.is_absolute() and ".." not in path.parts:
+            return path
+    notes.append("config invalid: learn.reports_dir: must be an absolute folder or start with ~/ and have no '..'")
+    return DEFAULT_REPORTS_DIR
 
 
 def load_learn_config(path: Path | None = None) -> LearnConfig:
@@ -158,6 +176,7 @@ def load_learn_config(path: Path | None = None) -> LearnConfig:
         followup_reports=_int(section, "followup_reports", 4, notes),
         repos=tuple(Path(p) for p in base.projects),
         delivery=delivery,
+        reports_dir=_reports_dir(section, notes),
         notes=tuple(notes),
     )
 
@@ -166,3 +185,11 @@ def learn_dir(cfg: LearnConfig) -> Path:
     if cfg.kb is None:
         raise ValueError("kb is not configured")
     return cfg.kb / cfg.kb_dir
+
+
+def reports_dir(cfg: LearnConfig) -> Path:
+    return cfg.reports_dir / "reports"
+
+
+def local_dir(cfg: LearnConfig) -> Path:
+    return cfg.reports_dir
