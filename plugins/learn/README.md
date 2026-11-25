@@ -27,11 +27,10 @@ performed, and records your decision on each recommendation in it.
 |---|---|
 | `learn:report` | Drafts the report from telemetry, writes the prose for each recommendation, renders markdown, HTML and JSON, and opens a knowledge-base PR. Takes an optional date. |
 | `learn:decide` | Records accept, defer or reject for a recommendation ID such as `2026-11-23-R2`. Accept files a GitHub issue; a reject needs a reason and is remembered so the idea is not suggested again. Deciding the same ID twice shows the first decision and changes nothing. |
-| `learn:deliver` | Emails the report to the configured address. With no mail tool connected, or on a failed send, it raises a notification that points at the markdown file. The result is recorded and the next report lists a fallback under Run errors. |
+| `learn:deliver` | Optionally emails the report to the configured address. With no address it raises a notification (`skipped`); with no mail tool, or on a failed send, it raises one too (`fallback`). Both point at `/cta-reports`. The result is recorded locally and the next report lists a fallback under Run errors. |
 | `learn:schedule` | Creates or updates the desktop scheduled task `cta-weekly-report`, Mondays 07:00 local time, which runs `learn:report` then `learn:deliver`. Safe to run again. |
 
-`learn:report`, `learn:decide` and `learn:deliver` never write in the live knowledge-base checkout.
-They work in git worktrees on `learn/...` branches and open pull requests.
+`learn:report` and `learn:deliver` write only to the local reports folder and run no git. `learn:decide` never writes in the live knowledge-base checkout: it works in a git worktree and opens a pull request.
 
 ## The `/cta-reports` pane
 

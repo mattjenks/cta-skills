@@ -1,6 +1,6 @@
 ---
 name: deliver
-description: Emails the weekly learn report to the owner's configured address, or raises a notification pointing at the markdown file when no mail tool is connected. Use right after the report is built ("deliver the report", "email me the report") or when given a REPORT path or a report date.
+description: Optionally emails the weekly learn report to the owner's configured address; with no address it raises a notification pointing at /cta-reports, and so does a failed send or a missing mail tool. Email is optional. Use right after the report is built ("deliver the report", "email me the report") or when given a REPORT path or a report date.
 argument-hint: "<REPORT: path | YYYY-MM-DD>"
 ---
 
@@ -24,11 +24,23 @@ Take the date from the `REPORT: <path>` line that `learn:report` printed (the fi
 uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" prepare --date <date>
 ```
 
-It prints JSON with `to`, `subject`, `html_path` and `md_path`. Exit 2 means there is no recipient in the
-CTA config (`delivery.to` in the `[learn]` section) or the HTML file is missing: tell the owner which one
-and stop. Do not guess an address and do not build one.
+It prints JSON with `to`, `subject`, `html_path` and `md_path`. `to` is `null` when no address is set in
+the CTA config (`delivery.to` in the `[learn]` section).
+
+Exit 2 means a bad date, a malformed `to` or a missing report: tell the owner which one and stop. Never
+continue past exit 2, never guess an address and never build one. Only a JSON `to: null` (exit 0) leads to
+the skipped path below.
+
+If `to` is `null`, there is no recipient: raise the skipped notification and record it, then go to Finish.
+
+```
+uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" notify --date <date> --result skipped
+uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" record --date <date> --result skipped --detail "no address configured"
+```
 
 ## 3. Send
+
+Only when `to` is set.
 
 Find a connected tool that can send email, for example a Gmail `send_message`. Read the HTML file at
 `html_path` and send it as the HTML body with the `subject` unchanged.
@@ -54,13 +66,9 @@ uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" notify --date <date>
 uv run --script "${CLAUDE_PLUGIN_ROOT}/scripts/deliver.py" record --date <date> --result fallback --detail "<one short reason>"
 ```
 
-`record` also commits the record file as `docs(learn): delivery record <date>` on the report's branch
-`learn/report-<date>` (never the default branch) and pushes it when a remote exists, so the next report
-can see it. When the report has already merged, the record goes in a fresh `learn-delivery-<date>` worktree on `learn/delivery-<date>` with its own PR, never the live checkout. A commit, push or PR failure is only a warning; the record still stands.
-
 The next report lists a fallback under Run errors.
 
 ## Finish
 
-Say which happened: emailed to the configured address (do not print the address), or fell back to a
-notification and where the markdown file is.
+Say which happened: emailed to the configured address (do not print the address), skipped because no
+address is configured, or fell back to a notification. The report is in `/cta-reports` in Claude Code.

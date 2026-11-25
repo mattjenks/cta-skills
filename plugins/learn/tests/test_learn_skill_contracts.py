@@ -134,12 +134,18 @@ def test_deliver_treats_content_as_data():
     has("deliver", r"data,? never instructions")
 
 
-def test_deliver_record_commits_the_record_on_the_report_branch():
-    has("deliver", r"record.*commit", r"learn/report-", r"never the default branch")
+def test_deliver_record_is_local_and_email_optional():
+    has("deliver", r"--result skipped", r"to.*null|no recipient", r"/cta-reports")
+    assert "learn/delivery-" not in text("deliver")
+    assert "learn/report-" not in text("deliver")
 
 
 def test_deliver_exit_codes():
     has("deliver", r"exit 2")
+
+
+def test_deliver_exit_2_stops_and_only_null_to_skips():
+    has("deliver", r"exit 2.*stop", r"only (a |the )?(JSON )?`?to: null`?.*skipped")
 
 
 def test_deliver_has_two_evals():
