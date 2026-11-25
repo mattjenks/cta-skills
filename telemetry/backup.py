@@ -141,8 +141,9 @@ def backup_reports(src: Path, dest: Path, keep: int = REPORTS_KEEP) -> int:
     """Mirror the `keep` newest learn reports (and index.json) to dest. Returns files copied.
 
     Dates come from src/index.json and are used only when they are real YYYY-MM-DD dates;
-    only regular, non-symlink files are copied. Report-named files at dest for other dates
-    are deleted; anything else at dest is left alone. A missing src is success. With no valid
+    only regular, non-symlink files are copied. Once `keep` dates are found locally,
+    report-named files at dest dated before the oldest of them are deleted; with fewer, nothing
+    is deleted. Anything else at dest is left alone. A missing src is success. With no valid
     date selected (missing, corrupt or empty index) nothing is copied or deleted.
     """
     if not src.is_dir():
@@ -167,10 +168,13 @@ def backup_reports(src: Path, dest: Path, keep: int = REPORTS_KEEP) -> int:
             continue
         dest.mkdir(parents=True, exist_ok=True)
         copied += _copy_if_changed(s_path, target)
-    if dest.is_dir():
+    # Prune only with a full set locally, and only dates older than the oldest kept: a reset or
+    # partly empty local folder (new Mac, changed reports_dir) never wipes the backed-up history.
+    if len(dates) >= keep and dest.is_dir():
+        oldest = min(dates)
         for p in dest.iterdir():
             m = _REPORT_FILE.fullmatch(p.name)
-            if m and m.group(1) not in dates:
+            if m and m.group(1) < oldest:
                 p.unlink(missing_ok=True)
     return copied
 

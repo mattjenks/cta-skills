@@ -262,13 +262,39 @@ def test_reports_backup_keeps_newest_five(tmp_path):
 
 def test_reports_backup_prunes_older_dates_at_dest(tmp_path):
     src, dest = tmp_path / "reports", tmp_path / "out"
-    make_reports(src, ["2026-02-01"])
+    local = ["2026-02-01", "2026-02-08", "2026-02-15", "2026-02-22", "2026-03-01"]
+    make_reports(src, local)
     dest.mkdir()
     for k in KINDS:
         (dest / f"2025-12-01.{k}").write_text("old")
     (dest / "notes.txt").write_text("keep")
     backup_mod.backup_reports(src, dest)
-    assert names(dest) == sorted([f"2026-02-01.{k}" for k in KINDS] + ["index.json", "notes.txt"])
+    assert names(dest) == sorted([f"{d}.{k}" for d in local for k in KINDS]
+                                 + ["index.json", "notes.txt"])
+
+
+def test_reports_backup_keeps_older_backups_when_local_has_fewer_than_keep(tmp_path):
+    """A reset local folder (new Mac, changed reports_dir) must not wipe the iCloud history."""
+    src, dest = tmp_path / "reports", tmp_path / "out"
+    make_reports(src, ["2026-03-01"])
+    dest.mkdir()
+    older = ["2026-01-04", "2026-01-11", "2026-01-18", "2026-01-25"]
+    for d in older:
+        for k in KINDS:
+            (dest / f"{d}.{k}").write_text("old")
+    backup_mod.backup_reports(src, dest)
+    assert names(dest) == sorted([f"{d}.{k}" for d in older + ["2026-03-01"] for k in KINDS]
+                                 + ["index.json"])
+
+
+def test_reports_backup_never_prunes_newer_dates_than_kept(tmp_path):
+    src, dest = tmp_path / "reports", tmp_path / "out"
+    local = ["2026-02-01", "2026-02-08", "2026-02-15", "2026-02-22", "2026-03-01"]
+    make_reports(src, local)
+    dest.mkdir()
+    (dest / "2026-04-05.md").write_text("newer than anything local")
+    backup_mod.backup_reports(src, dest)
+    assert (dest / "2026-04-05.md").exists()
 
 
 def test_reports_backup_with_fewer_than_five(tmp_path):
