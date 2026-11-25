@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/mattjenks/cta-skills/compare/build-v1.0.2...build-v1.1.0) (2026-11-25)
+
+
+### Features
+
+* **learn:** weekly skill-learning report, decide, deliver and schedule ([64dc805](https://github.com/mattjenks/cta-skills/commit/64dc8050c27516b385d6310beeefe7dfd966af3c))
+
 ## [1.0.2](https://github.com/mattjenks/cta-skills/compare/build-v1.0.1...build-v1.0.2) (2026-11-24)
 
 
