@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/mattjenks/cta-skills/compare/learn-v0.2.0...learn-v0.3.0) (2026-11-26)
+
+
+### Features
+
+* **learn:** cta-reports pane reads the local reports folder ([881d7e5](https://github.com/mattjenks/cta-skills/commit/881d7e5be9eb410e050aedaf852106479d3a3d90))
+* **learn:** optional email delivery with a local record ([d93450f](https://github.com/mattjenks/cta-skills/commit/d93450fdb405f2057009af8348bbe0bfb4386c0b))
+* **learn:** reports_dir config for local reports ([7000e84](https://github.com/mattjenks/cta-skills/commit/7000e84ca504f0f36d999905b068bb4115ba3867))
+* **learn:** weekly reports live locally, email is an optional reminder ([08266cf](https://github.com/mattjenks/cta-skills/commit/08266cfbd70aa3c4111167d2dd17cbe8db546487))
+* **learn:** write weekly reports to a local folder, no PR ([5ab75bd](https://github.com/mattjenks/cta-skills/commit/5ab75bd64e2b06a29b7c93c5ce8383c982048cb5))
+
+
+### Bug Fixes
+
+* **learn:** name the fallback result and assert red next week ([0345b2a](https://github.com/mattjenks/cta-skills/commit/0345b2ac5c210930b0a47b30923b18a6bd1290b6))
+
 ## [0.2.0](https://github.com/mattjenks/cta-skills/compare/learn-v0.1.0...learn-v0.2.0) (2026-11-25)
 
 

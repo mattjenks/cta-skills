@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0](https://github.com/mattjenks/cta-skills/compare/build-v1.1.0...build-v1.2.0) (2026-11-26)
+
+
+### Features
+
+* **build:** --unattended builds continue without a session hand-off ([52d97ba](https://github.com/mattjenks/cta-skills/commit/52d97bae22e107e00d0e9adf0887ffbfc066e443))
+* **build:** --unattended builds continue without a session hand-off ([d6b6b68](https://github.com/mattjenks/cta-skills/commit/d6b6b68f3a940f821d89ca5306c0363d94b3cd43))
+* **build:** pr turns on Auto-fix and archive-on-close for the code PR ([dac4682](https://github.com/mattjenks/cta-skills/commit/dac468292389b29c4d7c343700fca8594360362b))
+* **build:** pr turns on Auto-fix and archive-on-close for the code PR ([7dacf1b](https://github.com/mattjenks/cta-skills/commit/7dacf1bfc8d651c3a198b0d7015fda2d52933183))
+
+
+### Bug Fixes
+
+* **build:** keep the pr standing-request phrase on one line ([5245a20](https://github.com/mattjenks/cta-skills/commit/5245a2011c017d41b7e78371295cb1ef0d0102f0))
+* **build:** pr passes the code PR url to set_monitor ([241b0a7](https://github.com/mattjenks/cta-skills/commit/241b0a702151c13438e913c5ceb1d93771496ba8))
+
 ## [1.1.0](https://github.com/mattjenks/cta-skills/compare/build-v1.0.2...build-v1.1.0) (2026-11-25)
 
 
