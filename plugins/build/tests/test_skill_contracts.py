@@ -551,6 +551,17 @@ def test_pr_clear_pointer_is_last_step():
     assert re.search(r"pointer", last.splitlines()[0], re.I) and "clear" in last
 
 
+def test_pr_turns_on_auto_fix_and_archive_for_the_code_pr():
+    has("pr", r"get_status", r"bind_pr", r"set_monitor", r"auto_fix: true", r"address_comments: true",
+        r"auto_archive_on_close: true", r"standing request", r"attended or unattended",
+        r"[Nn]ever set auto-merge", r"never bind or watch the knowledge-base PR",
+        r"never retry through another session", r"(missing|refuses)[^.]*continue")
+    skill = (SKILLS / "pr/SKILL.md").read_text()
+    sec4 = skill.split("\n## 4.")[1].split("\n## 5.")[0]
+    assert sec4.find("set_monitor") > sec4.find("gh pr edit") > sec4.find("gh pr create") > -1
+    assert re.search(r"set_monitor` with the code PR's `url`", sec4)
+
+
 def test_review_pr_drafts_then_posts_after_confirmation():
     has("review-pr", r"gh pr (view|diff)", r"draft", r"confirm", r"gh pr review|gh api", r"sonnet",
         r"\.\./implement/references/models\.md")
