@@ -34,8 +34,12 @@ performed, and records your decision on each recommendation in it.
 ## The `/cta-reports` pane
 
 A pane (a mod in `hooks/register.tsx`) that lists the reports in your local reports folder, shows each
-recommendation and lets you accept, defer or reject it with a reason. It uses only the `claude-code`
-mod API.
+recommendation and lets you accept, defer or reject it with a reason. Below the recommendations it lists
+every rot audit item (broken, stale and permission) from the report JSON, each with its ID, location,
+problem and fix, and an Accept button (not for connectors) and a Dismiss button that asks for a reason.
+A decided item shows its decision and issue link; an item from an older report with no ID shows no
+buttons. Decisions are read from `decisions.jsonl` in your reports folder. It uses only the
+`claude-code` mod API.
 
 ## Where things live
 
