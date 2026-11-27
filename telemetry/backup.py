@@ -7,7 +7,8 @@
 Copies rotated archive files (mtime date <= day) not yet at the destination, plus a dated
 snapshot of the live otel.jsonl (`otel-live-<day>.jsonl`, replaced on same-day re-run).
 Every copy goes to a temp file, is verified by size and SHA-256, then renamed into place.
-Then it mirrors the 5 newest learn reports to `<backup_dir>/../learn/reports`.
+Then it mirrors the 5 newest learn reports to `<backup_dir>/../learn/reports` and copies the
+decision log to `<backup_dir>/../learn/decisions.jsonl` (never over a longer backup).
 The source is never modified or deleted. After a successful run only the newest
 LIVE_KEEP live snapshots (by date) are kept at the destination; rotated copies are never pruned.
 On any failure it exits 1 and, on macOS, raises one notification with the reason(s), a
@@ -179,6 +180,20 @@ def backup_reports(src: Path, dest: Path, keep: int = REPORTS_KEEP) -> int:
     return copied
 
 
+def backup_decisions(src: Path, dest: Path) -> int:
+    """Copy the local decision log to dest. Returns 1 when copied, else 0. Never deletes dest.
+
+    Only a plain file is copied, and only when it is at least as large as the backup: the log
+    is append-only, so a shorter one means a reset folder or new Mac and must not overwrite it.
+    """
+    if not _is_plain_file(src):
+        return 0
+    if dest.exists() and src.stat().st_size < dest.stat().st_size:
+        return 0
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    return int(_copy_if_changed(src, dest))
+
+
 def local_reports_dir() -> Path:
     """`<[learn] reports_dir>/reports`, with the same rules as the learn plugin's config."""
     sys.path.insert(0, str(HOOKS))
@@ -244,6 +259,12 @@ def _run_backup(day: date | None) -> str | None:
             print(f"backed up {r} report file(s) to {reports_dest}")
     except Exception as exc:
         reasons.append(f"reports backup failed: {type(exc).__name__}: {exc}")
+    decisions_dest = dest.parent / "learn" / "decisions.jsonl"
+    try:  # likewise: a decision-log failure never stops the telemetry or reports copies
+        if backup_decisions(local_reports_dir().parent / "decisions.jsonl", decisions_dest):
+            print(f"backed up the decision log to {decisions_dest}")
+    except Exception as exc:
+        reasons.append(f"decisions backup failed: {type(exc).__name__}: {exc}")
     return "; ".join(reasons) or None
 
 
