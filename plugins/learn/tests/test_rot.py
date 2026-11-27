@@ -269,7 +269,8 @@ def test_broken_skill_fingerprints_and_repo(tmp_path, monkeypatch):
     skill = plugin / "skills" / "s" / "SKILL.md"
     items = broken_skills.check(_week(), _cfg(tmp_path))
     assert sorted(i.fingerprint for i in items) == sorted([
-        f"broken|{skill}|frontmatter|description", f"broken|{skill}|link|gone.md"])
+        "broken|mine@mk/skills/s/SKILL.md|frontmatter|description",
+        "broken|mine@mk/skills/s/SKILL.md|link|gone.md"])
     assert {i.repo for i in items} == {"me/mk"} and all(i.accept for i in items)
 
 
@@ -278,8 +279,22 @@ def test_broken_skill_in_repo_has_no_repo(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     skill = _write(repo / ".claude" / "skills" / "s" / "SKILL.md", "---\n---\n")
     items = broken_skills.check(_week(), _cfg(tmp_path, repos=[repo]))
-    assert [i.fingerprint for i in items] == [f"broken|{skill}|frontmatter|description,name"]
+    assert [i.fingerprint for i in items] == [
+        "broken|.claude/skills/s/SKILL.md|frontmatter|description,name"]
+    assert str(tmp_path) not in items[0].fingerprint
     assert items[0].repo == ""
+
+
+def test_broken_plugin_fingerprint_survives_a_version_change(tmp_path, monkeypatch):
+    _markets(monkeypatch, tmp_path, mk="me")
+    prints = []
+    for version in ("1.0.0", "1.1.0"):
+        plugin = tmp_path / "cache" / "mk" / "mine" / version
+        _write(plugin / "skills" / "s" / "SKILL.md", "---\nname: s\n---\n[x](gone.md)\n")
+        _plugins(monkeypatch, tmp_path, {"mine@mk": plugin})
+        prints.append(sorted(i.fingerprint for i in broken_skills.check(_week(), _cfg(tmp_path))))
+    assert prints[0] == prints[1] and len(prints[0]) == 2
+    assert all("1.0.0" not in p and "1.1.0" not in p for p in prints[0])
 
 
 def test_connector_items_not_acceptable():
