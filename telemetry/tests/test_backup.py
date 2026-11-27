@@ -486,3 +486,24 @@ def test_decisions_dest_is_in_learn_folder_beside_backup_dir(dirs, monkeypatch, 
     monkeypatch.setattr(backup_mod, "ARCHIVE", src)
     assert backup_mod.main(["--day", "2026-03-10"], run=FakeRun()) == 0
     assert (tmp_path / "CTA" / "learn" / "decisions.jsonl").read_text() == '{"a":1}\n'
+
+
+def test_shorter_local_decision_log_is_reported_and_backup_kept(dirs, monkeypatch, tmp_path, capsys):
+    src, _ = dirs
+    local = tmp_path / "local" / "reports"
+    local.mkdir(parents=True)
+    (tmp_path / "local" / "decisions.jsonl").write_text('{"n":0}\n')
+    kept = tmp_path / "CTA" / "learn" / "decisions.jsonl"
+    kept.parent.mkdir(parents=True)
+    full = "".join(f'{{"n":{i}}}\n' for i in range(5))
+    kept.write_text(full)
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(backup_mod, "local_reports_dir", lambda: local)
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: tmp_path / "CTA" / "telemetry")
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+    run = FakeRun()
+    assert backup_mod.main(["--day", "2026-03-10"], run=run) == 1
+    assert kept.read_text() == full
+    reason = "local decision log is shorter than the backup; restore it"
+    assert reason in capsys.readouterr().err
+    assert reason in run.calls[0][0][2]

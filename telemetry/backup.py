@@ -180,6 +180,12 @@ def backup_reports(src: Path, dest: Path, keep: int = REPORTS_KEEP) -> int:
     return copied
 
 
+def decisions_shorter(src: Path, dest: Path) -> bool:
+    """True when the local decision log is a plain file smaller than the backup (a reset folder or
+    new Mac): the owner has to restore it, and the backup is never overwritten."""
+    return _is_plain_file(src) and dest.exists() and src.stat().st_size < dest.stat().st_size
+
+
 def backup_decisions(src: Path, dest: Path) -> int:
     """Copy the local decision log to dest. Returns 1 when copied, else 0. Never deletes dest.
 
@@ -188,7 +194,7 @@ def backup_decisions(src: Path, dest: Path) -> int:
     """
     if not _is_plain_file(src):
         return 0
-    if dest.exists() and src.stat().st_size < dest.stat().st_size:
+    if decisions_shorter(src, dest):
         return 0
     dest.parent.mkdir(parents=True, exist_ok=True)
     return int(_copy_if_changed(src, dest))
@@ -261,7 +267,11 @@ def _run_backup(day: date | None) -> str | None:
         reasons.append(f"reports backup failed: {type(exc).__name__}: {exc}")
     decisions_dest = dest.parent / "learn" / "decisions.jsonl"
     try:  # likewise: a decision-log failure never stops the telemetry or reports copies
-        if backup_decisions(local_reports_dir().parent / "decisions.jsonl", decisions_dest):
+        decisions_src = local_reports_dir().parent / "decisions.jsonl"
+        if decisions_shorter(decisions_src, decisions_dest):
+            reasons.append(f"local decision log is shorter than the backup; restore it "
+                           f"({decisions_dest})")
+        elif backup_decisions(decisions_src, decisions_dest):
             print(f"backed up the decision log to {decisions_dest}")
     except Exception as exc:
         reasons.append(f"decisions backup failed: {type(exc).__name__}: {exc}")
