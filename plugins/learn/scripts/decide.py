@@ -6,9 +6,13 @@
 
 Usage: decide.py <id> accept|defer|reject [--reason-stdin] [--config PATH]
 
+The ID is a recommendation (`<date>-R1` to R5) or a rot-audit item (`<date>-B1`, `-S1`, `-P1`: broken,
+stale, permission). A rot item can be accepted or rejected, not deferred; a connector item cannot be
+accepted.
+
 Exit 0 done (or already decided: the existing row is printed); 1 a tool failed; 2 bad input
-(malformed or unknown ID, reject without a reason); 3 no repo to file in; 4 the issue body
-failed the secret scan.
+(malformed or unknown ID, reject without a reason, a rot item that cannot take the decision); 3 no
+repo to file in; 4 the issue failed the secret scan.
 
 Every decision is appended to the local `decisions.jsonl` in `[learn] reports_dir`; no git, worktree
 or pull request is involved. The reason is read from stdin only, so it never passes through a shell
@@ -36,9 +40,11 @@ import learn_config
 import report
 import sanitize
 from learn_config import LearnConfig
+from model import RotItem
 
-ID_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}-R[1-5]")
-REPO_PATTERN = re.compile(r"[\w.-]+/[\w.-]+")
+ID_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}-(?:R[1-5]|[BSP][1-9]\d{0,3})")
+REPO_PATTERN = re.compile(r"[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 LABEL = "cta-learn"
 _PATHISH = re.compile(r"(?<![\w:])(?:~|/[\w.-]+)(?:/[\w.@+-]+)+")
 
@@ -194,22 +200,117 @@ def _scan(body: str) -> None:
         raise DecideError(4, "the issue body looks like it holds a secret; nothing was filed")
 
 
-def _file_issue(repo: str, rec: report.Recommendation, rec_id: str, day: str) -> str:
-    skill = sanitize.name(rec.candidate.skill)
-    title = f"{skill}: {sanitize.name(rec.candidate.signal)} ({rec_id})"
-    body = _issue_body(rec, day)
-    _scan(body)
-    _gh(["label", "create", LABEL, "--repo", repo, "--color", "0e8a16",
+def _create_issue(repo: str, title: str, body: str) -> str:
+    """Scan title and body (exit 4 on a hit or a scan problem), then file the issue; its URL."""
+    _scan(title + "\n" + body)
+    _gh(["label", "create", LABEL, f"--repo={repo}", "--color", "0e8a16",
          "--description", "Recommendation from the weekly learn report"])  # exists is fine
     with tempfile.TemporaryDirectory(prefix="cta-learn-issue-") as tmp:
         body_file = Path(tmp) / "body.md"
         body_file.write_text(body)
-        made = _gh(["issue", "create", "--repo", repo, "--title", title, "--label", LABEL,
+        made = _gh(["issue", "create", f"--repo={repo}", "--title", title, "--label", LABEL,
                     "--body-file", str(body_file)])
     url = made.stdout.strip().splitlines()[-1] if made.stdout.strip() else ""
     if made.returncode != 0 or not url.startswith("https://"):
         raise DecideError(1, "gh could not create the issue: " + sanitize.line(made.stderr))
     return url
+
+
+def _file_issue(repo: str, rec: report.Recommendation, rec_id: str, day: str) -> str:
+    skill = sanitize.name(rec.candidate.skill)
+    title = f"{skill}: {sanitize.name(rec.candidate.signal)} ({rec_id})"
+    return _create_issue(repo, title, _issue_body(rec, day))
+
+
+# ---------------------------------------------------------------- rot items
+
+def _writable(repo: str) -> bool:
+    out = _gh(["api", f"repos/{repo}", "--jq", ".permissions.push"])
+    return out.returncode == 0 and out.stdout.strip() == "true"
+
+
+def rot_repo(item: RotItem, cfg: LearnConfig) -> tuple[str, str]:
+    """(owner/repo, reason): the item's repo when the owner can push to it, else the fallback.
+
+    A stale-rule issue names a path in the owner's repo, so it never goes to a public fallback."""
+    if item.repo and REPO_PATTERN.fullmatch(item.repo):
+        if _writable(item.repo):
+            return item.repo, f"filed on the item's repo {item.repo}"
+        why = f"item repo {item.repo} is not writable"
+    else:
+        why = "the item has no repo"
+    fallback = cfg.fallback_repo
+    if not fallback or not REPO_PATTERN.fullmatch(fallback):
+        raise DecideError(3, "no repo to file in")
+    if item.kind == "stale":
+        out = _gh(["api", f"repos/{fallback}", "--jq", ".private"])
+        if out.returncode != 0 or out.stdout.strip() != "true":
+            raise DecideError(3, "no repo to file in: the fallback repo is not private")
+    return fallback, f"{why}; used the fallback repo"
+
+
+def _span(value: object, keep: str = "") -> str:
+    return "`" + _no_paths(sanitize.line(value, keep=keep)) + "`"
+
+
+def _where(location: str) -> tuple[str, str]:
+    """(file name, line) of a `path:line` location; the line is "" when there is none."""
+    path, _, number = location.rpartition(":")
+    if not path or not number.isdigit():
+        path, number = location, ""
+    return Path(path).name, number
+
+
+def _rot_issue(item: RotItem, rec_id: str, day: str) -> tuple[str, str]:
+    """(title, body) for a rot item. Every item value is cleaned and inside a code span."""
+    if item.kind == "stale":
+        name, number = _where(item.location)
+        missing = item.fingerprint.rsplit("|", 1)[-1]
+        title = f"Stale rule: {_span(name)} names {_span(missing)}"
+        lines = [f"File: {_span(name)}, line {_span(number)}", f"Missing: {_span(missing)}",
+                 "Fix: update or remove the line"]
+    elif item.kind == "permission":
+        blocked = item.fingerprint.endswith("|blocked")
+        title = (f"Permission: review deny rule {_span(item.location, "()")}" if blocked
+                 else f"Permission: add {_span(item.location, "()")}")
+        lines = [f"Rule: {_span(item.location, "()")}", f"This week: {_span(item.problem)}",
+                 "Settings: ~/.claude/settings.json, permissions.allow",
+                 "Applying it needs the owner's approval."]
+    else:
+        name, _ = _where(item.location)
+        title = f"Broken skill: {_span(item.problem)}"
+        lines = [f"File: {_span(name)}", f"Problem: {_span(item.problem)}",
+                 f"Fix: {_span(item.fix, "()")}"]
+    return title, "\n".join([*lines, "", f"Report: {day}", f"ID: {rec_id}", ""])
+
+
+def _check_fingerprint(item: RotItem) -> None:
+    fp = item.fingerprint
+    if not isinstance(fp, str) or not fp or len(fp) > 300 or _CONTROL.search(fp):
+        raise DecideError(2, "this item cannot be decided: it has no usable fingerprint")
+
+
+def _decide_rot(cfg: LearnConfig, rep: report.Report, rec_id: str, decision: str,
+                reason: str | None) -> dict:
+    item = next((i for items in rep.rot.values() for i in items if i.id == rec_id), None)
+    if item is None:
+        raise DecideError(2, f"unknown rot item {rec_id}")
+    if decision == "defer":
+        raise DecideError(2, "a rot item cannot be deferred; accept or reject it")
+    if decision == "accept" and not item.accept:
+        raise DecideError(2, "this item has no action to accept; reject it to hide it")
+    _check_fingerprint(item)
+    repo = url = None
+    note = reason
+    if decision == "accept":
+        repo, why = rot_repo(item, cfg)
+        title, body = _rot_issue(item, rec_id, rep.date)
+        url = _create_issue(repo, title, body)
+        note = f"{reason}; {why}" if reason else why
+    return {"id": rec_id, "date": rep.date, "kind": item.kind, "fingerprint": item.fingerprint,
+            "decision": decision, "reason": note, "repo": repo, "issue_url": url,
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "skill": "", "signal": f"rot:{item.kind}", "metric": "", "value": None}
 
 
 def _append(log: Path, row: dict) -> None:
@@ -225,6 +326,26 @@ def _append(log: Path, row: dict) -> None:
 
 
 # ---------------------------------------------------------------- decide
+
+def _decide_recommendation(cfg: LearnConfig, rep: report.Report, rec_id: str, decision: str,
+                           reason: str | None) -> dict:
+    rec = next((r for r in rep.recommendations if r.id == rec_id), None)
+    if rec is None:
+        raise DecideError(2, f"unknown recommendation {rec_id}")
+    cand = rec.candidate
+    usage = next((s for s in rep.top if s.skill == cand.skill), None)
+
+    repo = url = None
+    note = reason
+    if decision == "accept":
+        repo, why = resolve_repo(cand.skill, cfg, usage.marketplace if usage else None)
+        url = _file_issue(repo, rec, rec_id, rep.date)
+        note = f"{reason}; {why}" if reason else why
+    return {"id": rec_id, "date": rep.date, "skill": cand.skill, "fingerprint": cand.fingerprint,
+            "decision": decision, "reason": note, "repo": repo, "issue_url": url,
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "signal": cand.signal, "metric": cand.metric, "value": cand.value}
+
 
 def decide(cfg: LearnConfig, rec_id: str, decision: Literal["accept", "defer", "reject"],
            reason: str | None) -> dict:
@@ -245,22 +366,10 @@ def decide(cfg: LearnConfig, rec_id: str, decision: Literal["accept", "defer", "
         return existing
 
     rep = _load_report(cfg, rec_id)
-    rec = next((r for r in rep.recommendations if r.id == rec_id), None)
-    if rec is None:
-        raise DecideError(2, f"unknown recommendation {rec_id}")
-    cand = rec.candidate
-    usage = next((s for s in rep.top if s.skill == cand.skill), None)
-
-    repo = url = None
-    note = reason
-    if decision == "accept":
-        repo, why = resolve_repo(cand.skill, cfg, usage.marketplace if usage else None)
-        url = _file_issue(repo, rec, rec_id, rep.date)
-        note = f"{reason}; {why}" if reason else why
-    row = {"id": rec_id, "date": rep.date, "skill": cand.skill, "fingerprint": cand.fingerprint,
-           "decision": decision, "reason": note, "repo": repo, "issue_url": url,
-           "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-           "signal": cand.signal, "metric": cand.metric, "value": cand.value}
+    if rec_id[11] != "R":
+        row = _decide_rot(cfg, rep, rec_id, decision, reason)
+    else:
+        row = _decide_recommendation(cfg, rep, rec_id, decision, reason)
 
     _append(learn_config.decisions_path(cfg), row)
     try:
