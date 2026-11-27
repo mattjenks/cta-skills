@@ -469,7 +469,7 @@ def test_accept_stale_files_issue_in_item_repo(env, monkeypatch):
     assert "--repo=owner/repo" in create
     assert seen["title"] == "Stale rule: `CLAUDE.md` names `docs/gone.md`"
     lines = seen["body"].splitlines()
-    assert "File: `CLAUDE.md`, line `12`" in lines
+    assert "File: `CLAUDE.md` in `owner/repo`, line `12`" in lines
     assert "Missing: `docs/gone.md`" in lines
     assert "Fix: update or remove the line" in lines
     assert lines[-2:] == ["Report: 2026-11-23", f"ID: {S1}"]
@@ -530,7 +530,7 @@ def test_accept_broken_skill_issue(env, monkeypatch):
     decide.decide(env.cfg, "2026-11-23-B1", "accept", None)
     assert seen["title"] == "Broken skill: `link to missing.md does not exist`"
     lines = seen["body"].splitlines()
-    assert "File: `SKILL.md`" in lines
+    assert "File: `skills/x/SKILL.md`, line `7`" in lines
     assert "Problem: `link to missing.md does not exist`" in lines
     assert "Fix: `fix the link or restore the file`" in lines
 
@@ -550,6 +550,37 @@ def test_accept_permission_public_fallback_still_files(env, monkeypatch):
     _put_rot(env, permission=[_perm()])
     monkeypatch.setenv("GH_PRIVATE", "false")
     assert decide.decide(env.cfg, "2026-11-23-P1", "accept", None)["repo"] == FALLBACK
+
+
+def test_broken_skill_issue_names_plugin_key_and_relative_path(env, monkeypatch):
+    item = RotItem("broken", "/home/tester/.claude/plugins/cache/mk/mine/1.0.0/skills/s/SKILL.md:7",
+                   "link to gone.md does not exist", "fix the link or restore the file",
+                   fingerprint="broken|mine@mk/skills/s/SKILL.md|link|gone.md", repo="owner/repo")
+    _put_rot(env, broken=[item])
+    seen = _capture_issue(monkeypatch)
+    decide.decide(env.cfg, "2026-11-23-B1", "accept", None)
+    assert "File: `mine@mk/skills/s/SKILL.md`, line `7`" in seen["body"].splitlines()
+    assert "/home/tester" not in seen["body"]
+
+
+def test_stale_issue_names_repo_relative_path_and_repo(env, monkeypatch):
+    item = _stale()
+    item.location = "/home/tester/code/app/CLAUDE.md:12"
+    _put_rot(env, stale=[item])
+    seen = _capture_issue(monkeypatch)
+    decide.decide(env.cfg, S1, "accept", None)
+    assert "File: `CLAUDE.md` in `owner/repo`, line `12`" in seen["body"].splitlines()
+    assert "/home/tester" not in seen["body"]
+
+
+def test_rot_issue_without_line_prints_no_line_span(env, monkeypatch):
+    item = _stale()
+    item.location = "CLAUDE.md"
+    _put_rot(env, stale=[item])
+    seen = _capture_issue(monkeypatch)
+    decide.decide(env.cfg, S1, "accept", None)
+    assert ", line" not in seen["body"] and "``" not in seen["body"]
+    assert "File: `CLAUDE.md` in `owner/repo`" in seen["body"].splitlines()
 
 
 def test_accept_connector_exits_2(env):

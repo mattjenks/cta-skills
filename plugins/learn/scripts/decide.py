@@ -262,13 +262,21 @@ def _where(location: str) -> tuple[str, str]:
     return Path(path).name, number
 
 
+def _file_line(file: str, number: str, repo: str = "") -> str:
+    """`File: ...` line: the file, the repo when known, and the line only when there is one."""
+    out = f"File: {_span(file)}"
+    if repo and REPO_PATTERN.fullmatch(repo):
+        out += f" in {_span(repo)}"
+    return out + (f", line {_span(number)}" if number else "")
+
+
 def _rot_issue(item: RotItem, rec_id: str, day: str) -> tuple[str, str]:
     """(title, body) for a rot item. Every item value is cleaned and inside a code span."""
     if item.kind == "stale":
         name, number = _where(item.location)
         missing = item.fingerprint.rsplit("|", 1)[-1]
         title = f"Stale rule: {_span(name)} names {_span(missing)}"
-        lines = [f"File: {_span(name)}, line {_span(number)}", f"Missing: {_span(missing)}",
+        lines = [_file_line(name, number, item.repo), f"Missing: {_span(missing)}",
                  "Fix: update or remove the line"]
     elif item.kind == "permission":
         blocked = item.fingerprint.endswith("|blocked")
@@ -278,9 +286,11 @@ def _rot_issue(item: RotItem, rec_id: str, day: str) -> tuple[str, str]:
                  "Settings: ~/.claude/settings.json, permissions.allow",
                  "Applying it needs the owner's approval."]
     else:
-        name, _ = _where(item.location)
+        name, number = _where(item.location)
+        parts = item.fingerprint.split("|")
+        stable = parts[1] if len(parts) > 3 and parts[1] else name  # plugin key + relative path
         title = f"Broken skill: {_span(item.problem)}"
-        lines = [f"File: {_span(name)}", f"Problem: {_span(item.problem)}",
+        lines = [_file_line(stable, number), f"Problem: {_span(item.problem)}",
                  f"Fix: {_span(item.fix, "()")}"]
     return title, "\n".join([*lines, "", f"Report: {day}", f"ID: {rec_id}", ""])
 
