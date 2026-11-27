@@ -45,7 +45,8 @@ def _roots(cfg) -> list[Root]:
     roots = _plugin_roots(cfg)
     for repo in cfg.repos:
         if _common.personal_repo(repo, cfg):
-            roots.append((repo / ".claude" / "skills", "", repo, ""))
+            # The GitHub `owner/name` keeps the same path in two repos apart; never an absolute path.
+            roots.append((repo / ".claude" / "skills", "", repo, _common.origin_repo(repo) or ""))
     return roots
 
 

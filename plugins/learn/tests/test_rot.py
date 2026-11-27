@@ -285,6 +285,22 @@ def test_broken_skill_in_repo_has_no_repo(tmp_path, monkeypatch):
     assert items[0].repo == ""
 
 
+def test_broken_repo_skill_fingerprint_names_its_repo(tmp_path, monkeypatch):
+    _no_plugins(monkeypatch, tmp_path)
+    for name in ("one", "two"):
+        repo = tmp_path / name
+        _git_repo(repo, f"git@github.com:owner/{name}.git")
+        _write(repo / ".claude" / "skills" / "s" / "SKILL.md", "---\nname: s\n---\n[x](gone.md)\n")
+    items = broken_skills.check(_week(), _cfg(tmp_path, repos=[tmp_path / "one", tmp_path / "two"]))
+    prints = sorted(i.fingerprint for i in items)
+    assert prints == ["broken|owner/one/.claude/skills/s/SKILL.md|frontmatter|description",
+                      "broken|owner/one/.claude/skills/s/SKILL.md|link|gone.md",
+                      "broken|owner/two/.claude/skills/s/SKILL.md|frontmatter|description",
+                      "broken|owner/two/.claude/skills/s/SKILL.md|link|gone.md"]
+    assert all(str(tmp_path) not in p for p in prints)
+    assert all(i.repo == "" for i in items)
+
+
 def test_broken_plugin_fingerprint_survives_a_version_change(tmp_path, monkeypatch):
     _markets(monkeypatch, tmp_path, mk="me")
     prints = []
