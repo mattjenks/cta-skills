@@ -55,6 +55,10 @@ class RotItem:
     location: str
     problem: str
     fix: str
+    fingerprint: str = ""
+    id: str = ""
+    accept: bool = True
+    repo: str = ""  # a GitHub `owner/name`, or "" when the issue has no known home
 
 
 @dataclass

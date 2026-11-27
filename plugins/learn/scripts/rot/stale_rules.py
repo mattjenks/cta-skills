@@ -37,12 +37,15 @@ def _files(cfg):
 def check(week, cfg) -> list[RotItem]:
     items: list[RotItem] = []
     for path, root in _files(cfg):
+        repo = _common.origin_repo(root) or ""
         for number, text in _common.scan_lines(path):
             for token in _TICKS.findall(text):
                 rel = _candidate(token.strip(), root)
                 if rel and not (root / rel).exists():
+                    where, named = sanitize.path(path), sanitize.path(rel)
                     items.append(_common.item(
-                        "stale", f"{sanitize.path(path)}:{number}",
-                        f"names {sanitize.path(rel)}, which does not exist",
-                        "update or remove the line"))
+                        "stale", f"{where}:{number}",
+                        f"names {named}, which does not exist",
+                        "update or remove the line",
+                        fingerprint=f"stale|{where}|{named}", repo=repo))
     return items

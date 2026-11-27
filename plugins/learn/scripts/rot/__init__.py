@@ -13,7 +13,6 @@ from types import ModuleType
 from model import RotItem
 
 KINDS = ("broken", "stale", "permission")
-CAP = 5
 
 
 def _load(info: pkgutil.ModuleInfo) -> ModuleType:
@@ -50,8 +49,9 @@ def discover() -> tuple[list[ModuleType], list[str]]:
     return sorted(mods, key=lambda m: m.__name__), errors
 
 
-def run_rot(week, cfg) -> tuple[dict[str, list[RotItem]], dict[str, int], list[str]]:
-    """Items per kind (at most 5 each), the full count per kind, and the errors."""
+def run_rot(week, cfg, rejected: set[str] = frozenset()
+            ) -> tuple[dict[str, list[RotItem]], dict[str, int], list[str]]:
+    """Every item per kind except the rejected fingerprints, the count after that, and the errors."""
     mods, errors = discover()
     found: dict[str, list[RotItem]] = {kind: [] for kind in KINDS}
     for mod in mods:
@@ -60,5 +60,7 @@ def run_rot(week, cfg) -> tuple[dict[str, list[RotItem]], dict[str, int], list[s
             found[mod.KIND].extend(mod.check(week, cfg))
         except Exception as exc:  # one failing check is named, the rest still run
             errors.append(f"rot {name}: failed ({type(exc).__name__})")
+    found = {kind: [i for i in items if not i.fingerprint or i.fingerprint not in rejected]
+             for kind, items in found.items()}
     totals = {kind: len(items) for kind, items in found.items()}
-    return {kind: items[:CAP] for kind, items in found.items()}, totals, errors
+    return found, totals, errors

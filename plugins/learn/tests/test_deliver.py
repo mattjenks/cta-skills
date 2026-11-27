@@ -112,7 +112,7 @@ def _next_report(tmp_path, monkeypatch):
     week.freshness.update(prometheus="2026-11-22T10:00:00+00:00",
                           loki="2026-11-22T10:00:00+00:00")
     monkeypatch.setattr(gather, "gather", lambda cfg, end: week)
-    monkeypatch.setattr(rot, "run_rot", lambda w, c: ({k: [] for k in KINDS},
+    monkeypatch.setattr(rot, "run_rot", lambda w, c, r=frozenset(): ({k: [] for k in KINDS},
                                                       {k: 0 for k in KINDS}, []))
     monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], [], []))
     cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",),

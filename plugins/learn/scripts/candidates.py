@@ -39,7 +39,7 @@ def suppressed(decisions_path: Path | Iterable[Path]) -> set[str]:
             except ValueError:
                 continue
             if isinstance(row, dict) and row.get("decision") == "reject" and isinstance(
-                    row.get("fingerprint"), str):
+                    row.get("fingerprint"), str) and row["fingerprint"]:
                 out.add(row["fingerprint"])
     return out
 

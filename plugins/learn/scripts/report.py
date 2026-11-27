@@ -113,10 +113,6 @@ def _count(n: int | None) -> str:
     return "no data" if n is None else str(n)
 
 
-def _more(r: Report, extra: int) -> Link:
-    return Link(f"+{extra} more", r.links.get("grafana", ""))
-
-
 def _panel_link(r: Report, cand: Candidate) -> Link | str:
     url = r.links.get(f"panel:{cand.panel}")
     return Link(cand.panel, url) if url else cand.panel
@@ -188,10 +184,8 @@ def _sections(r: Report) -> list[tuple[str, list[tuple]]]:
             rotb.append(("p", "None."))
             continue
         for it in items:
-            rotb.append(("li", [f"{it.location}: {it.problem}. Fix: {it.fix}"]))
-        extra = r.rot_totals.get(kind, len(items)) - len(items)
-        if extra > 0:
-            rotb.append(("li", [_more(r, extra)]))
+            line = f"{it.location}: {it.problem}. Fix: {it.fix}"
+            rotb.append(("li", [f"{it.id} {line}" if it.id else line]))
     out.append(("Rot audit", rotb))
 
     health = [("li", [f"{k}: {v or 'no data'}"]) for k, v in r.health.items()]
@@ -265,6 +259,13 @@ def render_html(r: Report) -> str:
 
 def to_json(r: Report) -> str:
     return json.dumps(asdict(r), indent=2, sort_keys=False)
+
+
+def assign_rot_ids(items: dict[str, list[RotItem]], day: str) -> None:
+    """Set `<day>-<B|S|P><n>` on every item, in report order within each kind."""
+    for kind, letter in (("broken", "B"), ("stale", "S"), ("permission", "P")):
+        for n, it in enumerate(items.get(kind, []), 1):
+            it.id = f"{day}-{letter}{n}"
 
 
 def from_json(text: str) -> Report:
@@ -607,7 +608,9 @@ def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candi
     decisions = _decision_files(cfg) if cfg.kb else [Path("/nonexistent")]
     top = candidates.top_skills(week)
     cands, over, cand_errors = candidates.select(week, cfg, decisions)
-    items, totals, rot_errors = rot.run_rot(week, cfg)
+    rejected = candidates.suppressed(decisions)
+    items, totals, rot_errors = rot.run_rot(week, cfg, rejected)
+    assign_rot_ids(items, end.isoformat())
 
     errors = list(week.errors) + list(cand_errors) + list(rot_errors)
     errors += [f"config: {n}" for n in cfg.notes]

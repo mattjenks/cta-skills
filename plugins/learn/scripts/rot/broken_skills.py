@@ -17,30 +17,30 @@ _LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)[^)]*\)")
 _KEY = re.compile(r"^([A-Za-z_-]+):[ \t]*(.*)$")
 
 
-def _plugin_roots(cfg) -> list[Path]:
+def _plugin_roots(cfg) -> list[tuple[Path, str]]:
     try:
         data = json.loads(INSTALLED_PLUGINS.read_text())
     except (OSError, ValueError):
         return []
     plugins = data.get("plugins") if isinstance(data, dict) else None
     repos = gather._marketplace_repos()
-    roots: list[Path] = []
+    roots: list[tuple[Path, str]] = []
     for key, entries in (plugins.items() if isinstance(plugins, dict) else ()):
         market = key.split("@", 1)[1] if "@" in key else None
         if not gather.personal(cfg, None, gather._owner(repos.get(market)) if market else None):
             continue
         for entry in entries if isinstance(entries, list) else ():
             path = entry.get("installPath") if isinstance(entry, dict) else None
-            if isinstance(path, str) and Path(path) not in roots:
-                roots.append(Path(path))
+            if isinstance(path, str) and Path(path) not in [r for r, _ in roots]:
+                roots.append((Path(path), repos.get(market, "") if market else ""))
     return roots
 
 
-def _roots(cfg) -> list[Path]:
+def _roots(cfg) -> list[tuple[Path, str]]:
     roots = _plugin_roots(cfg)
     for repo in cfg.repos:
         if _common.personal_repo(repo, cfg):
-            roots.append(repo / ".claude" / "skills")
+            roots.append((repo / ".claude" / "skills", ""))
     return roots
 
 
@@ -63,7 +63,7 @@ def _frontmatter(lines: list[str]) -> set[str] | None:
     return keys
 
 
-def _check_skill(skill: Path) -> list[RotItem]:
+def _check_skill(skill: Path, repo: str) -> list[RotItem]:
     try:
         lines = skill.read_text(errors="replace").splitlines()
     except OSError:
@@ -75,27 +75,31 @@ def _check_skill(skill: Path) -> list[RotItem]:
     if missing:
         items.append(_common.item("broken", f"{where}:1",
                                   f"frontmatter is missing {' and '.join(missing)}",
-                                  "add the missing fields to the SKILL.md frontmatter"))
+                                  "add the missing fields to the SKILL.md frontmatter",
+                                  fingerprint=f"broken|{where}|frontmatter|{','.join(sorted(missing))}",
+                                  repo=repo))
     for number, text in _common.scan_lines(skill):
         for target in _LINK.findall(text):
             if re.match(r"^([a-z][a-z0-9+.-]*:|#|/|~)", target, re.I) or ".." in Path(target).parts:
                 continue
             rel = target.split("#", 1)[0].split("?", 1)[0]
             if rel and not (skill.parent / rel).exists():
+                named = sanitize.path(rel)
                 items.append(_common.item("broken", f"{where}:{number}",
-                                          f"link to {sanitize.path(rel)} does not exist",
-                                          "fix the link or restore the file"))
+                                          f"link to {named} does not exist",
+                                          "fix the link or restore the file",
+                                          fingerprint=f"broken|{where}|link|{named}", repo=repo))
     return items
 
 
 def check(week, cfg) -> list[RotItem]:
     items: list[RotItem] = []
     seen: set[Path] = set()
-    for root in _roots(cfg):
+    for root, repo in _roots(cfg):
         if not root.is_dir():
             continue
         for skill in sorted(root.rglob("SKILL.md")):
             if skill not in seen:
                 seen.add(skill)
-                items.extend(_check_skill(skill))
+                items.extend(_check_skill(skill, repo))
     return items
