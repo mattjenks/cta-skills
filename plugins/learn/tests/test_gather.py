@@ -1,6 +1,6 @@
 import json
 from dataclasses import asdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import gather
 import learn_config
@@ -421,3 +421,20 @@ def test_one_skill_under_two_orgs_counts_invocations_once(tmp_path, monkeypatch)
     s = week.skills[0]
     assert (s.invocations, s.sessions) == (2, 2)
     assert s.cost_usd == 3.0
+
+
+def test_prometheus_freshness_uses_week_range(tmp_path, monkeypatch):
+    calls = []
+
+    def prom(promql, at, is_prev):
+        if "timestamp" in promql:
+            calls.append((promql, at))
+            return [{"metric": {}, "value": [0, "1795669200"]}]
+        return []
+
+    _install(monkeypatch, tmp_path, prom=prom)
+    week = gather.gather(_cfg(tmp_path), END)
+    end_dt = gather.week_end(END)
+    assert calls == [("max(max_over_time(timestamp(claude_code_cost_usage_USD_total)[7d:5m]))", end_dt)]
+    assert week.freshness["prometheus"] == datetime.fromtimestamp(
+        1795669200, tz=timezone.utc).isoformat(timespec="seconds")

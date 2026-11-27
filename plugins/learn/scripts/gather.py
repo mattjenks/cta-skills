@@ -265,7 +265,7 @@ def gather(cfg: learn_config.LearnConfig, end: date) -> Week:
     cost = _sum_rows(run.prom(cost_q, end_dt))
     tokens = _sum_rows(run.prom(tok_q, end_dt))
     prev_cost = _sum_rows(run.prom(cost_q, prev_end))
-    stamp = run.prom("max(timestamp(claude_code_cost_usage_USD_total))", end_dt)
+    stamp = run.prom("max(max_over_time(timestamp(claude_code_cost_usage_USD_total)[7d:5m]))", end_dt)
     if stamp and _num(stamp[0].get("value")) is not None:
         week.freshness["prometheus"] = datetime.fromtimestamp(
             _num(stamp[0]["value"]), tz=timezone.utc).isoformat(timespec="seconds")
