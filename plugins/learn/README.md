@@ -53,7 +53,8 @@ Reports stay on this machine, in `[learn] reports_dir` (default `~/.local/share/
 | `backlog.md` | Recommendations past the cap of five |
 | `decisions.jsonl` | The decision log, one line per decision |
 
-The decision log is local too, so a new machine starts with an empty one.
+The decision log is local too. The nightly telemetry backup keeps a copy; on a new machine, restore it
+first (see the Restore steps in [telemetry/README.md](../../telemetry/README.md)) so dismissed items stay dismissed.
 
 ## Config
 
