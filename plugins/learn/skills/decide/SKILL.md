@@ -45,7 +45,7 @@ it. Do not run it again with another decision.
 ## Exit codes
 
 - 0: done, or already decided (the existing row).
-- 1: a tool failed (git or gh); report the message and stop.
+- 1: a tool failed (gh); report the message and stop.
 - exit 2: the ID is malformed or unknown, or a reject has no reason. Ask the owner and run it once more.
 - exit 3: no repo to file in; the skill's repo is not writable and no fallback repo is configured. Tell the
   owner to set `fallback_repo` in the `[learn]` section of the CTA config.

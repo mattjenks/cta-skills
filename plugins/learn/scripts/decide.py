@@ -10,9 +10,9 @@ Exit 0 done (or already decided: the existing row is printed); 1 a tool failed; 
 (malformed or unknown ID, reject without a reason); 3 no repo to file in; 4 the issue body
 failed the secret scan.
 
-Every decision is appended to `decisions.jsonl` in a worktree of the knowledge base on branch
-`learn/decisions`, committed and pushed, with one PR. The reason is read from stdin only, so it
-never passes through a shell argument.
+Every decision is appended to the local `decisions.jsonl` in `[learn] reports_dir`; no git, worktree
+or pull request is involved. The reason is read from stdin only, so it never passes through a shell
+argument.
 """
 
 from __future__ import annotations
@@ -39,11 +39,8 @@ from learn_config import LearnConfig
 
 ID_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}-R[1-5]")
 REPO_PATTERN = re.compile(r"[\w.-]+/[\w.-]+")
-WORKTREE_ROOT = Path.home() / ".local" / "share" / "cta" / "kb-worktrees"
-BRANCH = "learn/decisions"
 LABEL = "cta-learn"
 _PATHISH = re.compile(r"(?<![\w:])(?:~|/[\w.-]+)(?:/[\w.@+-]+)+")
-_GIT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX")
 
 
 class DecideError(Exception):
@@ -54,13 +51,9 @@ class DecideError(Exception):
 
 # ---------------------------------------------------------------- subprocess
 
-def _env() -> dict[str, str]:
-    return {k: v for k, v in os.environ.items() if k not in _GIT_VARS}
-
-
 def _run(argv: list[str], cwd: Path | None = None,
          drop: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
-    env = {k: v for k, v in _env().items() if k not in drop}
+    env = {k: v for k, v in os.environ.items() if k not in drop}
     try:
         return subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                               timeout=60, check=False)
@@ -70,10 +63,6 @@ def _run(argv: list[str], cwd: Path | None = None,
 
 def _gh(argv: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     return _run(["gh", *argv], cwd)
-
-
-def _git(cwd: Path, *argv: str) -> subprocess.CompletedProcess:
-    return _run(["git", "-C", str(cwd), *argv])
 
 
 def _warn(message: str) -> None:
@@ -114,117 +103,18 @@ def send(event: dict, endpoint: str, timeout: float = 5.0) -> None:
     _OPENER.open(req, timeout=timeout).read()
 
 
-# ---------------------------------------------------------------- knowledge base
-
-def _default_branch(kb: Path) -> str:
-    out = _git(kb, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-    if out.returncode == 0 and out.stdout.strip():
-        return out.stdout.strip().split("/", 1)[-1]
-    out = _git(kb, "rev-parse", "--abbrev-ref", "HEAD")
-    name = out.stdout.strip()
-    return name if out.returncode == 0 and name not in ("", "HEAD") else "main"
-
-
-def _base_ref(kb: Path) -> str:
-    """Where new learn branches start: `origin/<default>` when it exists, else the local branch.
-
-    Callers fetch first; with no remote or a failed fetch this falls back to the local branch.
-    """
-    name = _default_branch(kb)
-    remote = _git(kb, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{name}")
-    return f"origin/{name}" if remote.returncode == 0 else name
-
-
-def _has_remote(path: Path) -> bool:
-    return bool(_git(path, "remote").stdout.strip())
-
-
-def _worktree(cfg: LearnConfig) -> Path:
-    """The `learn/decisions` worktree of the knowledge base; created once, then reused.
-
-    A reused worktree whose pull request is no longer open is reset to the fetched default
-    branch (carrying over any row not yet merged), so the next pull request cannot conflict."""
-    if cfg.kb is None:
-        raise DecideError(2, "kb is not configured")
-    path = WORKTREE_ROOT / "learn-decisions"
-    if _has_remote(cfg.kb):
-        _git(cfg.kb, "fetch", "--quiet")  # a failed fetch falls back to local refs
-    if (path / ".git").exists():
-        _resync(cfg, path)
-        return path
-    exists = _git(cfg.kb, "rev-parse", "--verify", "--quiet", f"refs/heads/{BRANCH}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if exists.returncode == 0:
-        made = _git(cfg.kb, "worktree", "add", str(path), BRANCH)
-    else:
-        made = _git(cfg.kb, "worktree", "add", "-b", BRANCH, str(path), _base_ref(cfg.kb))
-    if made.returncode != 0:
-        raise DecideError(1, "cannot create the learn/decisions worktree: "
-                             + sanitize.line(made.stderr))
-    if exists.returncode == 0:
-        _resync(cfg, path)
-    return path
-
-
-def _open_pr(worktree: Path) -> bool | None:
-    """True when a `learn/decisions` PR is open, False when none is, None when gh cannot say."""
-    listed = _gh(["pr", "list", "--head", BRANCH, "--state", "open", "--json", "url",
-                  "--jq", ".[0].url"], worktree)
-    if listed.returncode != 0:
+def _find_row(cfg: LearnConfig, rec_id: str) -> dict | None:
+    try:
+        lines = learn_config.decisions_path(cfg).read_text().splitlines()
+    except OSError:
         return None
-    return bool(listed.stdout.strip())
-
-
-def _resync(cfg: LearnConfig, path: Path) -> None:
-    """Start the branch over from the default branch once its pull request has gone."""
-    if not _has_remote(path) or _open_pr(path) is not False:
-        return
-    base = _base_ref(cfg.kb)
-    if not base.startswith("origin/"):
-        return
-    head = _git(path, "rev-parse", "HEAD").stdout.strip()
-    if head == _git(path, "rev-parse", base).stdout.strip():
-        return
-    log = path / cfg.kb_dir / "decisions.jsonl"
-    try:
-        local = log.read_text().splitlines()
-    except OSError:
-        local = []
-    if _git(path, "reset", "--hard", "--quiet", base).returncode != 0:
-        _warn("could not reset learn/decisions to " + base)
-        return
-    try:
-        merged = log.read_text().splitlines()
-    except OSError:
-        merged = []
-    missing = [row for row in local if row.strip() and row not in merged]
-    for row in missing:  # rows that never reached the default branch
+    for raw in lines:
         try:
-            parsed = json.loads(row)
+            row = json.loads(raw)
         except ValueError:
             continue
-        if isinstance(parsed, dict):
-            _append(log, parsed)
-
-
-def _roots(cfg: LearnConfig) -> list[Path]:
-    """Places the decisions log may live: the live checkout, then the learn/decisions worktree."""
-    return [learn_config.learn_dir(cfg), WORKTREE_ROOT / "learn-decisions" / cfg.kb_dir]
-
-
-def _find_row(cfg: LearnConfig, rec_id: str) -> dict | None:
-    for root in _roots(cfg):
-        try:
-            lines = (root / "decisions.jsonl").read_text().splitlines()
-        except OSError:
-            continue
-        for raw in lines:
-            try:
-                row = json.loads(raw)
-            except ValueError:
-                continue
-            if isinstance(row, dict) and row.get("id") == rec_id:
-                return row
+        if isinstance(row, dict) and row.get("id") == rec_id:
+            return row
     return None
 
 
@@ -322,37 +212,6 @@ def _file_issue(repo: str, rec: report.Recommendation, rec_id: str, day: str) ->
     return url
 
 
-# ---------------------------------------------------------------- publishing
-
-def _publish(worktree: Path, rec_id: str, decision: str, log: Path) -> None:
-    rel = str(log.relative_to(worktree))
-    _git(worktree, "add", "--", rel)
-    done = _git(worktree, "commit", "-m", f"docs(learn): decision {rec_id} {decision}",
-                "--only", "--", rel)
-    if done.returncode != 0:
-        _warn("could not commit the decision: " + sanitize.line(done.stderr or done.stdout))
-        return
-    if not _has_remote(worktree):
-        return
-    pushed = _git(worktree, "push", "-u", "origin", BRANCH)
-    if pushed.returncode != 0 and _open_pr(worktree) is False:
-        # the old branch was merged and the worktree restarted from the default branch
-        pushed = _git(worktree, "push", "-u", "--force-with-lease", "origin", BRANCH)
-    if pushed.returncode != 0:
-        _warn("could not push learn/decisions: " + sanitize.line(pushed.stderr))
-        return
-    listed = _gh(["pr", "list", "--head", BRANCH, "--state", "open", "--json", "url",
-                  "--jq", ".[0].url"], worktree)
-    if listed.returncode == 0 and listed.stdout.strip():
-        return
-    base = _default_branch(worktree)
-    made = _gh(["pr", "create", "--base", base, "--head", BRANCH,
-                "--title", "Learn decisions",
-                "--body", "Decisions on weekly report recommendations."], worktree)
-    if made.returncode != 0:
-        _warn("could not open the decisions PR: " + sanitize.line(made.stderr))
-
-
 def _append(log: Path, row: dict) -> None:
     log.parent.mkdir(parents=True, exist_ok=True)
     prefix = ""
@@ -392,11 +251,10 @@ def decide(cfg: LearnConfig, rec_id: str, decision: Literal["accept", "defer", "
     cand = rec.candidate
     usage = next((s for s in rep.top if s.skill == cand.skill), None)
 
-    repo = url = worktree = None
+    repo = url = None
     note = reason
     if decision == "accept":
         repo, why = resolve_repo(cand.skill, cfg, usage.marketplace if usage else None)
-        worktree = _worktree(cfg)  # before filing: a setup failure must leave no orphan issue
         url = _file_issue(repo, rec, rec_id, rep.date)
         note = f"{reason}; {why}" if reason else why
     row = {"id": rec_id, "date": rep.date, "skill": cand.skill, "fingerprint": cand.fingerprint,
@@ -404,11 +262,7 @@ def decide(cfg: LearnConfig, rec_id: str, decision: Literal["accept", "defer", "
            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "signal": cand.signal, "metric": cand.metric, "value": cand.value}
 
-    if worktree is None:
-        worktree = _worktree(cfg)
-    log = worktree / cfg.kb_dir / "decisions.jsonl"
-    _append(log, row)
-    _publish(worktree, rec_id, decision, log)
+    _append(learn_config.decisions_path(cfg), row)
     try:
         send(build_event(row), cfg.otlp_url.rstrip("/") + "/v1/logs")
     except Exception as exc:  # a missing collector must never fail a decision

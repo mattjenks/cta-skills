@@ -13,28 +13,27 @@ performed, and records your decision on each recommendation in it.
 ## Requirements
 
 - `uv` on your `PATH`; every script runs as `uv run --script`.
-- `gh`, authenticated, to open the report PR and to file issues.
+- `gh`, authenticated, to file issues.
 - `gitleaks`, for `learn:decide`: it scans an issue body before filing and refuses on a hit or when
   the scan cannot run.
 - The telemetry stack from [`telemetry/README.md`](../../telemetry/README.md) running, so Prometheus
   and Loki have data. With the stack down the report is still written and says "No data".
-- A knowledge base (`kb` in the CTA config) that is a git repo.
 - The Claude desktop app, for `learn:schedule` only.
 
 ## Skills
 
 | Skill | What it does |
 |---|---|
-| `learn:report` | Drafts the report from telemetry, writes the prose for each recommendation, renders markdown, HTML and JSON, and opens a knowledge-base PR. Takes an optional date. |
+| `learn:report` | Drafts the report from telemetry, writes the prose for each recommendation, renders markdown, HTML and JSON into the local reports folder. Takes an optional date. |
 | `learn:decide` | Records accept, defer or reject for a recommendation ID such as `2026-11-23-R2`. Accept files a GitHub issue; a reject needs a reason and is remembered so the idea is not suggested again. Deciding the same ID twice shows the first decision and changes nothing. |
 | `learn:deliver` | Optionally emails the report to the configured address. With no address it raises a notification (`skipped`); with no mail tool, or on a failed send, it raises one too (`fallback`). Both point at `/cta-reports`. The result is recorded locally and the next report lists a fallback under Run errors. |
 | `learn:schedule` | Creates or updates the desktop scheduled task `cta-weekly-report`, Mondays 07:00 local time, which runs `learn:report` then `learn:deliver`. Safe to run again. |
 
-`learn:report` and `learn:deliver` write only to the local reports folder and run no git. `learn:decide` never writes in the live knowledge-base checkout: it works in a git worktree and opens a pull request.
+`learn:report`, `learn:deliver` and `learn:decide` write only to the local reports folder and run no git. `learn:decide` files a GitHub issue on accept and logs every decision locally; it opens no pull request.
 
 ## The `/cta-reports` pane
 
-A pane (a mod in `hooks/register.tsx`) that lists the reports in your knowledge base, shows each
+A pane (a mod in `hooks/register.tsx`) that lists the reports in your local reports folder, shows each
 recommendation and lets you accept, defer or reject it with a reason. It uses only the `claude-code`
 mod API.
 
@@ -48,8 +47,9 @@ Reports stay on this machine, in `[learn] reports_dir` (default `~/.local/share/
 | `reports/index.json` | The list of reports |
 | `reports/<YYYY-MM-DD>.delivery.json` | How the report was delivered |
 | `backlog.md` | Recommendations past the cap of five |
+| `decisions.jsonl` | The decision log, one line per decision |
 
-Decisions stay in the knowledge base: `<kb>/<kb_dir>/decisions.jsonl`, one line per decision.
+The decision log is local too, so a new machine starts with an empty one.
 
 ## Config
 
@@ -72,9 +72,9 @@ to = "you@example.com"
 
 | Key | Default | Meaning |
 |---|---|---|
-| `kb` (top level) | unset | Knowledge-base repo. `report.py` needs it to read decisions and refuses to run without it. |
-| `[learn] kb_dir` | `learn` | Folder under `kb` for `decisions.jsonl`. Relative, no `..`. |
-| `[learn] reports_dir` | `~/.local/share/cta/learn` | Local folder for reports and `backlog.md`. Absolute or starting with `~/`, no `..`. |
+| `kb` (top level) | unset | Knowledge-base repo. Optional: the report and `learn:decide` run without it. |
+| `[learn] kb_dir` | `learn` | Folder under `kb` for learn files. Relative, no `..`. |
+| `[learn] reports_dir` | `~/.local/share/cta/learn` | Local folder for reports, `backlog.md` and `decisions.jsonl`. Absolute or starting with `~/`, no `..`. |
 | `[learn] exclude_organization_ids` | `[]` | Work organization IDs. Their events are dropped before ranking. Replaces the old `organization_ids` key, which is now ignored with a note. |
 | `[learn] exclude_owners` | `[]` | Marketplace repo owners whose skills are left out of the report. |
 | `[learn] fallback_repo` | unset | `owner/name` repo where `learn:decide` files an issue when the skill's own repo is not writable. |
