@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.4.0](https://github.com/mattjenks/cta-skills/compare/learn-v0.3.0...learn-v0.4.0) (2026-11-27)
+
+
+### Features
+
+* **learn:** act on rot audit items from the reports pane ([969dbdb](https://github.com/mattjenks/cta-skills/commit/969dbdb70bf8c21c00ee85c75f14fd2e63741d8e))
+* **learn:** decide accepts and dismisses rot items ([6abac91](https://github.com/mattjenks/cta-skills/commit/6abac91d087e645551322240f7f26f758df953df))
+* **learn:** decisions are logged locally, with no knowledge-base PR ([4bc3b25](https://github.com/mattjenks/cta-skills/commit/4bc3b256c5234ca1dc6dfc3b258d30f895a448ab))
+* **learn:** reports pane accepts and dismisses rot items ([511daae](https://github.com/mattjenks/cta-skills/commit/511daaee4c7191453e3a1ebda30eba6fbfb388d2))
+* **learn:** rot items get IDs and stable fingerprints, full list, dismissed ones hidden ([55692be](https://github.com/mattjenks/cta-skills/commit/55692be0a21b134a8978a07b558b8bfa006697f8))
+
+
+### Bug Fixes
+
+* **learn:** a repo skill's fingerprint names its GitHub repo ([e9182d1](https://github.com/mattjenks/cta-skills/commit/e9182d1c588ca7c1e279db99979657b634e04a15))
+* **learn:** file every repo-local rot item only in a private fallback ([61d789d](https://github.com/mattjenks/cta-skills/commit/61d789de6500e13ae1c4b1f8c904771228933d3b))
+* **learn:** keep a broken-skill fingerprint stable across plugin updates ([6d83e6a](https://github.com/mattjenks/cta-skills/commit/6d83e6a8a603bd204ae5153e9e2abe8b74fc5a6c))
+* **learn:** name the file a rot issue is about ([50d2905](https://github.com/mattjenks/cta-skills/commit/50d29051f9c77b4a8bffc0874cb4517ddea4046a))
+* **learn:** prometheus freshness reads the newest sample in the week ([4bc946b](https://github.com/mattjenks/cta-skills/commit/4bc946b1647e58b6975ff8c10b19a2c2685187c7))
+* **learn:** stale-rules check skips emails, bare file names and missing folders ([23211ee](https://github.com/mattjenks/cta-skills/commit/23211eed9725c86c876796be177ba294e1b5b4e4))
+
 ## [0.3.0](https://github.com/mattjenks/cta-skills/compare/learn-v0.2.0...learn-v0.3.0) (2026-11-26)
 
 
