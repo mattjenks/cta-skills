@@ -1,5 +1,5 @@
 {
   "plugins/core": "0.5.1",
   "plugins/build": "1.2.0",
-  "plugins/learn": "0.3.0"
+  "plugins/learn": "0.4.0"
 }
