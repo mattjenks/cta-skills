@@ -535,6 +535,23 @@ def test_accept_broken_skill_issue(env, monkeypatch):
     assert "Fix: `fix the link or restore the file`" in lines
 
 
+def test_accept_broken_skill_public_fallback_exits_3(env, monkeypatch):
+    item = _broken()
+    item.repo = ""
+    _put_rot(env, broken=[item])
+    monkeypatch.setenv("GH_PRIVATE", "false")
+    with pytest.raises(decide.DecideError) as err:
+        decide.decide(env.cfg, "2026-11-23-B1", "accept", None)
+    assert err.value.code == 3 and "not private" in str(err.value)
+    assert env.gh_calls("issue", "create") == [] and env.rows() == []
+
+
+def test_accept_permission_public_fallback_still_files(env, monkeypatch):
+    _put_rot(env, permission=[_perm()])
+    monkeypatch.setenv("GH_PRIVATE", "false")
+    assert decide.decide(env.cfg, "2026-11-23-P1", "accept", None)["repo"] == FALLBACK
+
+
 def test_accept_connector_exits_2(env):
     _put_rot(env, broken=[_connector()])
     with pytest.raises(decide.DecideError) as err:

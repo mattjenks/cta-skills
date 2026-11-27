@@ -232,7 +232,8 @@ def _writable(repo: str) -> bool:
 def rot_repo(item: RotItem, cfg: LearnConfig) -> tuple[str, str]:
     """(owner/repo, reason): the item's repo when the owner can push to it, else the fallback.
 
-    A stale-rule issue names a path in the owner's repo, so it never goes to a public fallback."""
+    A stale-rule or broken-skill issue names a path or link target from the owner's repos, so it
+    never goes to a public fallback; a permission issue carries only the allow rule."""
     if item.repo and REPO_PATTERN.fullmatch(item.repo):
         if _writable(item.repo):
             return item.repo, f"filed on the item's repo {item.repo}"
@@ -242,7 +243,7 @@ def rot_repo(item: RotItem, cfg: LearnConfig) -> tuple[str, str]:
     fallback = cfg.fallback_repo
     if not fallback or not REPO_PATTERN.fullmatch(fallback):
         raise DecideError(3, "no repo to file in")
-    if item.kind == "stale":
+    if item.kind != "permission":
         out = _gh(["api", f"repos/{fallback}", "--jq", ".private"])
         if out.returncode != 0 or out.stdout.strip() != "true":
             raise DecideError(3, "no repo to file in: the fallback repo is not private")
