@@ -6,13 +6,17 @@
 
 Usage: decide.py <id> accept|defer|reject [--reason-stdin] [--config PATH]
 
-Exit 0 done (or already decided: the existing row is printed); 1 a tool failed; 2 bad input
-(malformed or unknown ID, reject without a reason); 3 no repo to file in; 4 the issue body
-failed the secret scan.
+The ID is a recommendation (`<date>-R1` to R5) or a rot-audit item (`<date>-B1`, `-S1`, `-P1`: broken,
+stale, permission). A rot item can be accepted or rejected, not deferred; a connector item cannot be
+accepted.
 
-Every decision is appended to `decisions.jsonl` in a worktree of the knowledge base on branch
-`learn/decisions`, committed and pushed, with one PR. The reason is read from stdin only, so it
-never passes through a shell argument.
+Exit 0 done (or already decided: the existing row is printed); 1 a tool failed; 2 bad input
+(malformed or unknown ID, reject without a reason, a rot item that cannot take the decision); 3 no
+repo to file in; 4 the issue failed the secret scan.
+
+Every decision is appended to the local `decisions.jsonl` in `[learn] reports_dir`; no git, worktree
+or pull request is involved. The reason is read from stdin only, so it never passes through a shell
+argument.
 """
 
 from __future__ import annotations
@@ -36,14 +40,13 @@ import learn_config
 import report
 import sanitize
 from learn_config import LearnConfig
+from model import RotItem
 
-ID_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}-R[1-5]")
-REPO_PATTERN = re.compile(r"[\w.-]+/[\w.-]+")
-WORKTREE_ROOT = Path.home() / ".local" / "share" / "cta" / "kb-worktrees"
-BRANCH = "learn/decisions"
+ID_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}-(?:R[1-5]|[BSP][1-9]\d{0,3})")
+REPO_PATTERN = re.compile(r"[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 LABEL = "cta-learn"
 _PATHISH = re.compile(r"(?<![\w:])(?:~|/[\w.-]+)(?:/[\w.@+-]+)+")
-_GIT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX")
 
 
 class DecideError(Exception):
@@ -54,13 +57,9 @@ class DecideError(Exception):
 
 # ---------------------------------------------------------------- subprocess
 
-def _env() -> dict[str, str]:
-    return {k: v for k, v in os.environ.items() if k not in _GIT_VARS}
-
-
 def _run(argv: list[str], cwd: Path | None = None,
          drop: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
-    env = {k: v for k, v in _env().items() if k not in drop}
+    env = {k: v for k, v in os.environ.items() if k not in drop}
     try:
         return subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True,
                               timeout=60, check=False)
@@ -70,10 +69,6 @@ def _run(argv: list[str], cwd: Path | None = None,
 
 def _gh(argv: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     return _run(["gh", *argv], cwd)
-
-
-def _git(cwd: Path, *argv: str) -> subprocess.CompletedProcess:
-    return _run(["git", "-C", str(cwd), *argv])
 
 
 def _warn(message: str) -> None:
@@ -114,117 +109,18 @@ def send(event: dict, endpoint: str, timeout: float = 5.0) -> None:
     _OPENER.open(req, timeout=timeout).read()
 
 
-# ---------------------------------------------------------------- knowledge base
-
-def _default_branch(kb: Path) -> str:
-    out = _git(kb, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
-    if out.returncode == 0 and out.stdout.strip():
-        return out.stdout.strip().split("/", 1)[-1]
-    out = _git(kb, "rev-parse", "--abbrev-ref", "HEAD")
-    name = out.stdout.strip()
-    return name if out.returncode == 0 and name not in ("", "HEAD") else "main"
-
-
-def _base_ref(kb: Path) -> str:
-    """Where new learn branches start: `origin/<default>` when it exists, else the local branch.
-
-    Callers fetch first; with no remote or a failed fetch this falls back to the local branch.
-    """
-    name = _default_branch(kb)
-    remote = _git(kb, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{name}")
-    return f"origin/{name}" if remote.returncode == 0 else name
-
-
-def _has_remote(path: Path) -> bool:
-    return bool(_git(path, "remote").stdout.strip())
-
-
-def _worktree(cfg: LearnConfig) -> Path:
-    """The `learn/decisions` worktree of the knowledge base; created once, then reused.
-
-    A reused worktree whose pull request is no longer open is reset to the fetched default
-    branch (carrying over any row not yet merged), so the next pull request cannot conflict."""
-    if cfg.kb is None:
-        raise DecideError(2, "kb is not configured")
-    path = WORKTREE_ROOT / "learn-decisions"
-    if _has_remote(cfg.kb):
-        _git(cfg.kb, "fetch", "--quiet")  # a failed fetch falls back to local refs
-    if (path / ".git").exists():
-        _resync(cfg, path)
-        return path
-    exists = _git(cfg.kb, "rev-parse", "--verify", "--quiet", f"refs/heads/{BRANCH}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if exists.returncode == 0:
-        made = _git(cfg.kb, "worktree", "add", str(path), BRANCH)
-    else:
-        made = _git(cfg.kb, "worktree", "add", "-b", BRANCH, str(path), _base_ref(cfg.kb))
-    if made.returncode != 0:
-        raise DecideError(1, "cannot create the learn/decisions worktree: "
-                             + sanitize.line(made.stderr))
-    if exists.returncode == 0:
-        _resync(cfg, path)
-    return path
-
-
-def _open_pr(worktree: Path) -> bool | None:
-    """True when a `learn/decisions` PR is open, False when none is, None when gh cannot say."""
-    listed = _gh(["pr", "list", "--head", BRANCH, "--state", "open", "--json", "url",
-                  "--jq", ".[0].url"], worktree)
-    if listed.returncode != 0:
+def _find_row(cfg: LearnConfig, rec_id: str) -> dict | None:
+    try:
+        lines = learn_config.decisions_path(cfg).read_text().splitlines()
+    except OSError:
         return None
-    return bool(listed.stdout.strip())
-
-
-def _resync(cfg: LearnConfig, path: Path) -> None:
-    """Start the branch over from the default branch once its pull request has gone."""
-    if not _has_remote(path) or _open_pr(path) is not False:
-        return
-    base = _base_ref(cfg.kb)
-    if not base.startswith("origin/"):
-        return
-    head = _git(path, "rev-parse", "HEAD").stdout.strip()
-    if head == _git(path, "rev-parse", base).stdout.strip():
-        return
-    log = path / cfg.kb_dir / "decisions.jsonl"
-    try:
-        local = log.read_text().splitlines()
-    except OSError:
-        local = []
-    if _git(path, "reset", "--hard", "--quiet", base).returncode != 0:
-        _warn("could not reset learn/decisions to " + base)
-        return
-    try:
-        merged = log.read_text().splitlines()
-    except OSError:
-        merged = []
-    missing = [row for row in local if row.strip() and row not in merged]
-    for row in missing:  # rows that never reached the default branch
+    for raw in lines:
         try:
-            parsed = json.loads(row)
+            row = json.loads(raw)
         except ValueError:
             continue
-        if isinstance(parsed, dict):
-            _append(log, parsed)
-
-
-def _roots(cfg: LearnConfig) -> list[Path]:
-    """Places the decisions log may live: the live checkout, then the learn/decisions worktree."""
-    return [learn_config.learn_dir(cfg), WORKTREE_ROOT / "learn-decisions" / cfg.kb_dir]
-
-
-def _find_row(cfg: LearnConfig, rec_id: str) -> dict | None:
-    for root in _roots(cfg):
-        try:
-            lines = (root / "decisions.jsonl").read_text().splitlines()
-        except OSError:
-            continue
-        for raw in lines:
-            try:
-                row = json.loads(raw)
-            except ValueError:
-                continue
-            if isinstance(row, dict) and row.get("id") == rec_id:
-                return row
+        if isinstance(row, dict) and row.get("id") == rec_id:
+            return row
     return None
 
 
@@ -304,17 +200,15 @@ def _scan(body: str) -> None:
         raise DecideError(4, "the issue body looks like it holds a secret; nothing was filed")
 
 
-def _file_issue(repo: str, rec: report.Recommendation, rec_id: str, day: str) -> str:
-    skill = sanitize.name(rec.candidate.skill)
-    title = f"{skill}: {sanitize.name(rec.candidate.signal)} ({rec_id})"
-    body = _issue_body(rec, day)
-    _scan(body)
-    _gh(["label", "create", LABEL, "--repo", repo, "--color", "0e8a16",
+def _create_issue(repo: str, title: str, body: str) -> str:
+    """Scan title and body (exit 4 on a hit or a scan problem), then file the issue; its URL."""
+    _scan(title + "\n" + body)
+    _gh(["label", "create", LABEL, f"--repo={repo}", "--color", "0e8a16",
          "--description", "Recommendation from the weekly learn report"])  # exists is fine
     with tempfile.TemporaryDirectory(prefix="cta-learn-issue-") as tmp:
         body_file = Path(tmp) / "body.md"
         body_file.write_text(body)
-        made = _gh(["issue", "create", "--repo", repo, "--title", title, "--label", LABEL,
+        made = _gh(["issue", "create", f"--repo={repo}", "--title", title, "--label", LABEL,
                     "--body-file", str(body_file)])
     url = made.stdout.strip().splitlines()[-1] if made.stdout.strip() else ""
     if made.returncode != 0 or not url.startswith("https://"):
@@ -322,35 +216,112 @@ def _file_issue(repo: str, rec: report.Recommendation, rec_id: str, day: str) ->
     return url
 
 
-# ---------------------------------------------------------------- publishing
+def _file_issue(repo: str, rec: report.Recommendation, rec_id: str, day: str) -> str:
+    skill = sanitize.name(rec.candidate.skill)
+    title = f"{skill}: {sanitize.name(rec.candidate.signal)} ({rec_id})"
+    return _create_issue(repo, title, _issue_body(rec, day))
 
-def _publish(worktree: Path, rec_id: str, decision: str, log: Path) -> None:
-    rel = str(log.relative_to(worktree))
-    _git(worktree, "add", "--", rel)
-    done = _git(worktree, "commit", "-m", f"docs(learn): decision {rec_id} {decision}",
-                "--only", "--", rel)
-    if done.returncode != 0:
-        _warn("could not commit the decision: " + sanitize.line(done.stderr or done.stdout))
-        return
-    if not _has_remote(worktree):
-        return
-    pushed = _git(worktree, "push", "-u", "origin", BRANCH)
-    if pushed.returncode != 0 and _open_pr(worktree) is False:
-        # the old branch was merged and the worktree restarted from the default branch
-        pushed = _git(worktree, "push", "-u", "--force-with-lease", "origin", BRANCH)
-    if pushed.returncode != 0:
-        _warn("could not push learn/decisions: " + sanitize.line(pushed.stderr))
-        return
-    listed = _gh(["pr", "list", "--head", BRANCH, "--state", "open", "--json", "url",
-                  "--jq", ".[0].url"], worktree)
-    if listed.returncode == 0 and listed.stdout.strip():
-        return
-    base = _default_branch(worktree)
-    made = _gh(["pr", "create", "--base", base, "--head", BRANCH,
-                "--title", "Learn decisions",
-                "--body", "Decisions on weekly report recommendations."], worktree)
-    if made.returncode != 0:
-        _warn("could not open the decisions PR: " + sanitize.line(made.stderr))
+
+# ---------------------------------------------------------------- rot items
+
+def _writable(repo: str) -> bool:
+    out = _gh(["api", f"repos/{repo}", "--jq", ".permissions.push"])
+    return out.returncode == 0 and out.stdout.strip() == "true"
+
+
+def rot_repo(item: RotItem, cfg: LearnConfig) -> tuple[str, str]:
+    """(owner/repo, reason): the item's repo when the owner can push to it, else the fallback.
+
+    A stale-rule or broken-skill issue names a path or link target from the owner's repos, so it
+    never goes to a public fallback; a permission issue carries only the allow rule."""
+    if item.repo and REPO_PATTERN.fullmatch(item.repo):
+        if _writable(item.repo):
+            return item.repo, f"filed on the item's repo {item.repo}"
+        why = f"item repo {item.repo} is not writable"
+    else:
+        why = "the item has no repo"
+    fallback = cfg.fallback_repo
+    if not fallback or not REPO_PATTERN.fullmatch(fallback):
+        raise DecideError(3, "no repo to file in")
+    if item.kind != "permission":
+        out = _gh(["api", f"repos/{fallback}", "--jq", ".private"])
+        if out.returncode != 0 or out.stdout.strip() != "true":
+            raise DecideError(3, "no repo to file in: the fallback repo is not private")
+    return fallback, f"{why}; used the fallback repo"
+
+
+def _span(value: object, keep: str = "") -> str:
+    return "`" + _no_paths(sanitize.line(value, keep=keep)) + "`"
+
+
+def _where(location: str) -> tuple[str, str]:
+    """(file name, line) of a `path:line` location; the line is "" when there is none."""
+    path, _, number = location.rpartition(":")
+    if not path or not number.isdigit():
+        path, number = location, ""
+    return Path(path).name, number
+
+
+def _file_line(file: str, number: str, repo: str = "") -> str:
+    """`File: ...` line: the file, the repo when known, and the line only when there is one."""
+    out = f"File: {_span(file)}"
+    if repo and REPO_PATTERN.fullmatch(repo):
+        out += f" in {_span(repo)}"
+    return out + (f", line {_span(number)}" if number else "")
+
+
+def _rot_issue(item: RotItem, rec_id: str, day: str) -> tuple[str, str]:
+    """(title, body) for a rot item. Every item value is cleaned and inside a code span."""
+    if item.kind == "stale":
+        name, number = _where(item.location)
+        missing = item.fingerprint.rsplit("|", 1)[-1]
+        title = f"Stale rule: {_span(name)} names {_span(missing)}"
+        lines = [_file_line(name, number, item.repo), f"Missing: {_span(missing)}",
+                 "Fix: update or remove the line"]
+    elif item.kind == "permission":
+        blocked = item.fingerprint.endswith("|blocked")
+        title = (f"Permission: review deny rule {_span(item.location, "()")}" if blocked
+                 else f"Permission: add {_span(item.location, "()")}")
+        lines = [f"Rule: {_span(item.location, "()")}", f"This week: {_span(item.problem)}",
+                 "Settings: ~/.claude/settings.json, permissions.allow",
+                 "Applying it needs the owner's approval."]
+    else:
+        name, number = _where(item.location)
+        parts = item.fingerprint.split("|")
+        stable = parts[1] if len(parts) > 3 and parts[1] else name  # plugin key + relative path
+        title = f"Broken skill: {_span(item.problem)}"
+        lines = [_file_line(stable, number), f"Problem: {_span(item.problem)}",
+                 f"Fix: {_span(item.fix, "()")}"]
+    return title, "\n".join([*lines, "", f"Report: {day}", f"ID: {rec_id}", ""])
+
+
+def _check_fingerprint(item: RotItem) -> None:
+    fp = item.fingerprint
+    if not isinstance(fp, str) or not fp or len(fp) > 300 or _CONTROL.search(fp):
+        raise DecideError(2, "this item cannot be decided: it has no usable fingerprint")
+
+
+def _decide_rot(cfg: LearnConfig, rep: report.Report, rec_id: str, decision: str,
+                reason: str | None) -> dict:
+    item = next((i for items in rep.rot.values() for i in items if i.id == rec_id), None)
+    if item is None:
+        raise DecideError(2, f"unknown rot item {rec_id}")
+    if decision == "defer":
+        raise DecideError(2, "a rot item cannot be deferred; accept or reject it")
+    if decision == "accept" and not item.accept:
+        raise DecideError(2, "this item has no action to accept; reject it to hide it")
+    _check_fingerprint(item)
+    repo = url = None
+    note = reason
+    if decision == "accept":
+        repo, why = rot_repo(item, cfg)
+        title, body = _rot_issue(item, rec_id, rep.date)
+        url = _create_issue(repo, title, body)
+        note = f"{reason}; {why}" if reason else why
+    return {"id": rec_id, "date": rep.date, "kind": item.kind, "fingerprint": item.fingerprint,
+            "decision": decision, "reason": note, "repo": repo, "issue_url": url,
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "skill": "", "signal": f"rot:{item.kind}", "metric": "", "value": None}
 
 
 def _append(log: Path, row: dict) -> None:
@@ -366,6 +337,26 @@ def _append(log: Path, row: dict) -> None:
 
 
 # ---------------------------------------------------------------- decide
+
+def _decide_recommendation(cfg: LearnConfig, rep: report.Report, rec_id: str, decision: str,
+                           reason: str | None) -> dict:
+    rec = next((r for r in rep.recommendations if r.id == rec_id), None)
+    if rec is None:
+        raise DecideError(2, f"unknown recommendation {rec_id}")
+    cand = rec.candidate
+    usage = next((s for s in rep.top if s.skill == cand.skill), None)
+
+    repo = url = None
+    note = reason
+    if decision == "accept":
+        repo, why = resolve_repo(cand.skill, cfg, usage.marketplace if usage else None)
+        url = _file_issue(repo, rec, rec_id, rep.date)
+        note = f"{reason}; {why}" if reason else why
+    return {"id": rec_id, "date": rep.date, "skill": cand.skill, "fingerprint": cand.fingerprint,
+            "decision": decision, "reason": note, "repo": repo, "issue_url": url,
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "signal": cand.signal, "metric": cand.metric, "value": cand.value}
+
 
 def decide(cfg: LearnConfig, rec_id: str, decision: Literal["accept", "defer", "reject"],
            reason: str | None) -> dict:
@@ -386,29 +377,12 @@ def decide(cfg: LearnConfig, rec_id: str, decision: Literal["accept", "defer", "
         return existing
 
     rep = _load_report(cfg, rec_id)
-    rec = next((r for r in rep.recommendations if r.id == rec_id), None)
-    if rec is None:
-        raise DecideError(2, f"unknown recommendation {rec_id}")
-    cand = rec.candidate
-    usage = next((s for s in rep.top if s.skill == cand.skill), None)
+    if rec_id[11] != "R":
+        row = _decide_rot(cfg, rep, rec_id, decision, reason)
+    else:
+        row = _decide_recommendation(cfg, rep, rec_id, decision, reason)
 
-    repo = url = worktree = None
-    note = reason
-    if decision == "accept":
-        repo, why = resolve_repo(cand.skill, cfg, usage.marketplace if usage else None)
-        worktree = _worktree(cfg)  # before filing: a setup failure must leave no orphan issue
-        url = _file_issue(repo, rec, rec_id, rep.date)
-        note = f"{reason}; {why}" if reason else why
-    row = {"id": rec_id, "date": rep.date, "skill": cand.skill, "fingerprint": cand.fingerprint,
-           "decision": decision, "reason": note, "repo": repo, "issue_url": url,
-           "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-           "signal": cand.signal, "metric": cand.metric, "value": cand.value}
-
-    if worktree is None:
-        worktree = _worktree(cfg)
-    log = worktree / cfg.kb_dir / "decisions.jsonl"
-    _append(log, row)
-    _publish(worktree, rec_id, decision, log)
+    _append(learn_config.decisions_path(cfg), row)
     try:
         send(build_event(row), cfg.otlp_url.rstrip("/") + "/v1/logs")
     except Exception as exc:  # a missing collector must never fail a decision

@@ -45,11 +45,6 @@ def _write_report(tmp_path, day=DAY, **kw):
     return reports
 
 
-@pytest.fixture(autouse=True)
-def _no_worktrees(tmp_path, monkeypatch):
-    monkeypatch.setattr(decide, "WORKTREE_ROOT", tmp_path / "no-worktrees")
-
-
 def test_prepare_without_recipient_returns_null_to(tmp_path, capsys):
     reports = _write_report(tmp_path)
     cfg = _config(tmp_path, to=None)
@@ -112,7 +107,7 @@ def _next_report(tmp_path, monkeypatch):
     week.freshness.update(prometheus="2026-11-22T10:00:00+00:00",
                           loki="2026-11-22T10:00:00+00:00")
     monkeypatch.setattr(gather, "gather", lambda cfg, end: week)
-    monkeypatch.setattr(rot, "run_rot", lambda w, c: ({k: [] for k in KINDS},
+    monkeypatch.setattr(rot, "run_rot", lambda w, c, r=frozenset(): ({k: [] for k in KINDS},
                                                       {k: 0 for k in KINDS}, []))
     monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], [], []))
     cfg = learn_config.LearnConfig(kb=tmp_path / "kb", exclude_organization_ids=("org-work",),
@@ -157,7 +152,6 @@ def test_record_skipped_writes_locally(tmp_path, monkeypatch):
     assert _record(tmp_path, "skipped", detail="no address configured", to=None) == 0
     row = json.loads((reports / f"{DAY}.delivery.json").read_text())
     assert row["result"] == "skipped" and row["date"] == DAY
-    assert not decide.WORKTREE_ROOT.exists() or list(decide.WORKTREE_ROOT.iterdir()) == []
 
 
 def test_record_skipped_refused_when_to_set(tmp_path, capsys):
@@ -169,7 +163,6 @@ def test_record_skipped_refused_when_to_set(tmp_path, capsys):
 
 def test_deliver_ignores_old_report_worktree(tmp_path, monkeypatch):
     root = tmp_path / "wt"
-    monkeypatch.setattr(decide, "WORKTREE_ROOT", root)
     old = root / f"learn-report-{DAY}" / "learn" / "reports"
     old.mkdir(parents=True)
     (old / f"{DAY}.json").write_text(report.to_json(_report()))

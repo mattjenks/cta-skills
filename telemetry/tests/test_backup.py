@@ -411,3 +411,99 @@ def test_reports_backup_keeps_dest_when_index_unreadable(tmp_path, bad_index):
     (src / "2026-02-01.json").write_text("plain, not in the index")
     assert backup_mod.backup_reports(src, dest) == 0
     assert {p.name: p.read_text() for p in dest.iterdir()} == before
+
+
+# ---- decision log backup ----
+
+
+def test_decisions_copied(tmp_path):
+    src, dest = tmp_path / "decisions.jsonl", tmp_path / "out" / "decisions.jsonl"
+    src.write_text('{"a":1}\n{"b":2}\n')
+    assert backup_mod.backup_decisions(src, dest) == 1
+    assert dest.read_text() == '{"a":1}\n{"b":2}\n'
+    assert backup_mod.backup_decisions(src, dest) == 0  # unchanged: skipped
+
+
+def test_decisions_grown_local_replaces_backup(tmp_path):
+    src, dest = tmp_path / "decisions.jsonl", tmp_path / "decisions-backup.jsonl"
+    dest.write_text('{"a":1}\n')
+    src.write_text('{"a":1}\n{"b":2}\n')
+    assert backup_mod.backup_decisions(src, dest) == 1
+    assert dest.read_text() == '{"a":1}\n{"b":2}\n'
+
+
+def test_decisions_missing_local_leaves_backup(tmp_path):
+    dest = tmp_path / "decisions.jsonl"
+    dest.write_text("kept\n")
+    assert backup_mod.backup_decisions(tmp_path / "absent.jsonl", dest) == 0
+    assert dest.read_text() == "kept\n"
+
+
+def test_decisions_symlink_not_copied(tmp_path):
+    real = tmp_path / "real.jsonl"
+    real.write_text("x\n")
+    link = tmp_path / "decisions.jsonl"
+    link.symlink_to(real)
+    dest = tmp_path / "out" / "decisions.jsonl"
+    assert backup_mod.backup_decisions(link, dest) == 0
+    assert not dest.exists()
+
+
+def test_decisions_shorter_local_does_not_overwrite(tmp_path):
+    src, dest = tmp_path / "decisions.jsonl", tmp_path / "backup.jsonl"
+    full = "".join(f'{{"n":{i}}}\n' for i in range(5))
+    dest.write_text(full)
+    src.write_text('{"n":0}\n{"n":1}\n')
+    assert backup_mod.backup_decisions(src, dest) == 0
+    assert dest.read_text() == full
+
+
+def test_decisions_failure_does_not_stop_telemetry_copy(dirs, monkeypatch):
+    src, dest = dirs
+    make(src / "otel-20260308T010000.jsonl", b"old", date(2026, 3, 8))
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: dest)
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+
+    def boom(*a, **kw):
+        raise OSError("icloud offline")
+
+    monkeypatch.setattr(backup_mod, "backup_decisions", boom)
+    run = FakeRun()
+    assert backup_mod.main(["--day", "2026-03-10"], run=run) == 1
+    assert (dest / "otel-20260308T010000.jsonl").read_bytes() == b"old"
+    assert len(run.calls) == 1
+    assert "decision" in run.calls[0][0][2] and "icloud offline" in run.calls[0][0][2]
+
+
+def test_decisions_dest_is_in_learn_folder_beside_backup_dir(dirs, monkeypatch, tmp_path):
+    src, _ = dirs
+    local = tmp_path / "local" / "reports"
+    local.mkdir(parents=True)
+    (tmp_path / "local" / "decisions.jsonl").write_text('{"a":1}\n')
+    monkeypatch.setattr(backup_mod, "local_reports_dir", lambda: local)
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: tmp_path / "CTA" / "telemetry")
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+    assert backup_mod.main(["--day", "2026-03-10"], run=FakeRun()) == 0
+    assert (tmp_path / "CTA" / "learn" / "decisions.jsonl").read_text() == '{"a":1}\n'
+
+
+def test_shorter_local_decision_log_is_reported_and_backup_kept(dirs, monkeypatch, tmp_path, capsys):
+    src, _ = dirs
+    local = tmp_path / "local" / "reports"
+    local.mkdir(parents=True)
+    (tmp_path / "local" / "decisions.jsonl").write_text('{"n":0}\n')
+    kept = tmp_path / "CTA" / "learn" / "decisions.jsonl"
+    kept.parent.mkdir(parents=True)
+    full = "".join(f'{{"n":{i}}}\n' for i in range(5))
+    kept.write_text(full)
+    monkeypatch.setattr(backup_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(backup_mod, "local_reports_dir", lambda: local)
+    monkeypatch.setattr(backup_mod, "configured_dest", lambda: tmp_path / "CTA" / "telemetry")
+    monkeypatch.setattr(backup_mod, "ARCHIVE", src)
+    run = FakeRun()
+    assert backup_mod.main(["--day", "2026-03-10"], run=run) == 1
+    assert kept.read_text() == full
+    reason = "local decision log is shorter than the backup; restore it"
+    assert reason in capsys.readouterr().err
+    assert reason in run.calls[0][0][2]

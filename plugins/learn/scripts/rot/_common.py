@@ -10,11 +10,29 @@ import sanitize
 from model import RotItem
 
 _OWNER = re.compile(r"[:/]([^/:]+)/[^/:]+?(?:\.git)?/?$")
+_GITHUB = re.compile(r"^(?:git@github\.com:|https://github\.com/)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$")
+_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
-def item(kind: str, location: str, problem: str, fix: str) -> RotItem:
-    """A RotItem whose text is inert; callers pass external strings through `sanitize.path`."""
-    return RotItem(kind, sanitize.line(location, keep="()"), sanitize.line(problem), sanitize.line(fix, keep="()"))
+def item(kind: str, location: str, problem: str, fix: str, *, fingerprint: str,
+         accept: bool = True, repo: str = "") -> RotItem:
+    """A RotItem whose text is inert; callers pass external strings through `sanitize.path`.
+
+    `fingerprint` is built by the caller from already-cleaned parts and holds no line number."""
+    return RotItem(kind, sanitize.line(location, keep="()"), sanitize.line(problem),
+                   sanitize.line(fix, keep="()"), fingerprint=fingerprint, accept=accept,
+                   repo=repo if _REPO.fullmatch(repo) else "")
+
+
+def origin_repo(repo: Path) -> str | None:
+    """`owner/name` of the repo's `origin` when the host is github.com, else None."""
+    try:
+        done = subprocess.run(["git", "-C", str(repo), "remote", "get-url", "origin"],
+                              capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = _GITHUB.match(done.stdout.strip()) if done.returncode == 0 else None
+    return match.group(1) if match else None
 
 
 def origin_owner(repo: Path) -> str | None:

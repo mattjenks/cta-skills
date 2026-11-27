@@ -19,5 +19,6 @@ def check(week, cfg) -> list[RotItem]:
         if server and status and status != "connected":
             counts[(server, status)] += 1
     return [_common.item("broken", server, f"{n} connection attempts ended {sanitize.name(status)}",
-                         "check the server's configuration or sign in again")
+                         "check the server's configuration or sign in again",
+                         fingerprint=f"broken|connector|{server}|{sanitize.name(status)}", accept=False)
             for (server, status), n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]

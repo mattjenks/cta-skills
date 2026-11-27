@@ -92,14 +92,66 @@ def test_change_since_last_week():
     assert "new" in md
 
 
-def test_plus_n_more():
-    items = [RotItem("broken", f"loc{i}", "bad", "fix it") for i in range(5)]
-    r = _report(rot={"broken": items, "stale": [], "permission": []},
-                rot_totals={"broken": 9, "stale": 0, "permission": 0})
+def test_rot_ids_by_kind():
+    items = {"broken": [RotItem("broken", "a", "p", "f")],
+             "stale": [RotItem("stale", "b", "p", "f"), RotItem("stale", "c", "p", "f")],
+             "permission": [RotItem("permission", "d", "p", "f")]}
+    report.assign_rot_ids(items, "2026-11-26")
+    assert [i.id for i in items["broken"]] == ["2026-11-26-B1"]
+    assert [i.id for i in items["stale"]] == ["2026-11-26-S1", "2026-11-26-S2"]
+    assert [i.id for i in items["permission"]] == ["2026-11-26-P1"]
+
+
+def test_rot_markdown_lists_all_with_ids():
+    items = {"broken": [], "permission": [],
+             "stale": [RotItem("stale", f"loc{i}", "bad", "fix it", f"fp{i}") for i in range(40)]}
+    report.assign_rot_ids(items, "2026-11-23")
+    r = _report(rot=items, rot_totals={"broken": 0, "stale": 40, "permission": 0})
     md = report.render_md(r)
-    assert md.count("loc") == 5
-    assert "[+4 more](http://127.0.0.1:3000/d/cta-skills?from=1&to=2)" in md
-    assert "+4 more" in report.render_html(r)
+    assert "more" not in md.lower().replace("came up more than once", "")
+    for n in range(1, 41):
+        assert f"2026-11-23-S{n} loc{n - 1}: bad. Fix: fix it" in md
+    assert "2026-11-23-S40" in report.render_html(r)
+
+
+def test_rot_without_id_renders_without_prefix():
+    r = _report(rot={"broken": [RotItem("broken", "loc", "bad", "fix")], "stale": [],
+                     "permission": []}, rot_totals={"broken": 1, "stale": 0, "permission": 0})
+    md = report.render_md(r)
+    assert "loc: bad. Fix: fix" in md and " loc: bad" not in md.replace("- loc", "")
+
+
+def test_from_json_loads_rot_without_ids():
+    old = {"date": "2026-11-26", "status": "green", "headline": "x", "top": [], "total_cost": None,
+           "total_prev_cost": None, "recommendations": [], "followups": [],
+           "builds": {"count": 0, "ratings": [], "repeated": []},
+           "rot": {"broken": [{"kind": "broken", "location": "a", "problem": "p", "fix": "f"}],
+                   "stale": [], "permission": []},
+           "rot_totals": {"broken": 1, "stale": 0, "permission": 0},
+           "health": {}, "errors": [], "links": {}}
+    r = report.from_json(json.dumps(old))
+    it = r.rot["broken"][0]
+    assert (it.id, it.fingerprint, it.accept, it.repo) == ("", "", True, "")
+    assert "a: p. Fix: f" in report.render_md(r)
+
+
+def test_dismissed_rot_hidden_next_week(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "CLAUDE.md").write_text("`docs/gone.md`\n")
+    monkeypatch.setattr(gather, "gather", lambda cfg, end: _fresh_week())
+    monkeypatch.setattr(candidates, "select", lambda w, c, p: ([], [], []))
+    monkeypatch.setattr("rot.broken_skills.INSTALLED_PLUGINS", tmp_path / "none.json")
+    cfg = _cfg(tmp_path, repos=(repo,))
+    first = report.build(cfg, END).rot["stale"]
+    assert len(first) == 1 and first[0].id == "2026-11-23-S1"
+    log = learn_config.decisions_path(cfg)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(json.dumps({"id": first[0].id, "fingerprint": first[0].fingerprint,
+                               "decision": "reject", "date": "2026-11-23"}) + "\n")
+    (repo / "CLAUDE.md").write_text("\n" * 8 + "`docs/gone.md`\n")  # the line moved
+    again = report.build(cfg, date(2026, 11, 30))
+    assert again.rot["stale"] == [] and again.rot_totals["stale"] == 0
 
 
 def test_html_escapes_names():
@@ -200,7 +252,7 @@ def _stub(monkeypatch, week, rot_items=None, cands=()):
     monkeypatch.setattr(gather, "gather", lambda cfg, end: week)
     items = rot_items or {k: [] for k in KINDS}
     totals = {k: len(v) for k, v in items.items()}
-    monkeypatch.setattr(rot, "run_rot", lambda w, c: (items, totals, []))
+    monkeypatch.setattr(rot, "run_rot", lambda w, c, r=frozenset(): (items, totals, []))
     monkeypatch.setattr(candidates, "select", lambda w, c, p: (list(cands), [], []))
 
 
@@ -273,7 +325,7 @@ def test_no_previous_report_means_nothing_is_new(tmp_path, monkeypatch):
 
 
 def _decisions(tmp_path, *rows):
-    path = tmp_path / "learn" / "decisions.jsonl"
+    path = tmp_path / "local" / "decisions.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
@@ -455,9 +507,8 @@ def test_fallback_delivery_adds_error(tmp_path, monkeypatch):
 
 
 def test_report_ignores_old_report_worktree(tmp_path, monkeypatch):
-    import decide
     prior = "2026-11-16"
-    old = decide.WORKTREE_ROOT / f"learn-report-{prior}" / "learn" / "reports"
+    old = tmp_path / "wt" / f"learn-report-{prior}" / "learn" / "reports"
     old.mkdir(parents=True)
     (old / f"{prior}.delivery.json").write_text(json.dumps({"date": prior, "result": "fallback"}))
     reports = tmp_path / "local" / "reports"
@@ -486,11 +537,11 @@ def test_draft_and_render_write_to_reports_dir(tmp_path, monkeypatch, capsys):
     assert not (kb / "learn").exists()
 
 
-def test_followups_read_decisions_from_kb_not_reports_dir(tmp_path, monkeypatch):
+def test_followups_read_decisions_from_reports_dir_not_kb(tmp_path, monkeypatch):
     _stub(monkeypatch, _growing_week(), cands=[])
     cfg = _cfg(tmp_path)
-    (tmp_path / "local").mkdir()
-    (tmp_path / "local" / "decisions.jsonl").write_text(
+    (tmp_path / "learn").mkdir()
+    (tmp_path / "learn" / "decisions.jsonl").write_text(
         json.dumps(_accepted("2026-11-16-R1", "2026-11-16")) + "\n")
     assert report.build(cfg, END).followups == []
     _decisions(tmp_path, _accepted("2026-11-09-R1", "2026-11-09"))
@@ -527,43 +578,33 @@ def test_select_skips_skills_without_session_counts(tmp_path):
     assert cands == [] and over == [] and not [e for e in errors if "failed" in e]
 
 
-def _worktree_decisions(cfg_kb_dir, *rows):
-    import decide
-    path = decide.WORKTREE_ROOT / "learn-decisions" / cfg_kb_dir / "decisions.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
-
-
 def _growing_week():
     # cost 3.0 against 2.0 is 1.5x with 4 sessions: past the cost_growth bar
     return _fresh_week([_skill()])
 
 
-def test_rejection_only_in_the_decisions_worktree_still_suppresses(tmp_path, monkeypatch):
+def test_rejection_in_the_local_log_suppresses(tmp_path, monkeypatch):
     monkeypatch.setattr(gather, "gather", lambda cfg, end: _growing_week())
-    monkeypatch.setattr(rot, "run_rot", lambda w, c: ({k: [] for k in KINDS},
-                                                      {k: 0 for k in KINDS}, []))
+    monkeypatch.setattr(rot, "run_rot", lambda w, c, r=frozenset(): (
+        {k: [] for k in KINDS}, {k: 0 for k in KINDS}, []))
     cfg = _cfg(tmp_path)
     assert [r.candidate.fingerprint for r in report.build(cfg, END).recommendations] == [
         "alpha|cost_growth"]
-    _worktree_decisions(cfg.kb_dir, {"id": "2026-11-16-R1", "skill": "alpha",
-                                     "fingerprint": "alpha|cost_growth", "decision": "reject",
-                                     "date": "2026-11-16"})
-    assert not (tmp_path / "learn" / "decisions.jsonl").exists()
+    _decisions(tmp_path, {"id": "2026-11-16-R1", "skill": "alpha",
+                          "fingerprint": "alpha|cost_growth", "decision": "reject",
+                          "date": "2026-11-16"})
     assert report.build(cfg, END).recommendations == []
 
 
-def test_accept_only_in_the_decisions_worktree_is_followed_up(tmp_path, monkeypatch):
+def test_report_runs_without_kb(tmp_path, monkeypatch, capsys):
     _stub(monkeypatch, _growing_week(), cands=[])
-    cfg = _cfg(tmp_path)
-    _worktree_decisions(cfg.kb_dir, _accepted("2026-11-16-R1", "2026-11-16"))
-    assert [f.id for f in report.build(cfg, END).followups] == ["2026-11-16-R1"]
-
-
-def test_same_decision_in_both_places_counts_once(tmp_path, monkeypatch):
-    _stub(monkeypatch, _growing_week(), cands=[])
-    cfg = _cfg(tmp_path)
-    row = _accepted("2026-11-16-R1", "2026-11-16")
-    _decisions(tmp_path, row)
-    _worktree_decisions(cfg.kb_dir, row)
-    assert [f.id for f in report.build(cfg, END).followups] == ["2026-11-16-R1"]
+    local = tmp_path / "local"
+    local.mkdir()
+    (local / "decisions.jsonl").write_text(
+        json.dumps(_accepted("2026-11-09-R1", "2026-11-09")) + "\n")
+    cfgp = tmp_path / "c.toml"
+    cfgp.write_text(f'[learn]\nreports_dir = "{local}"\n')
+    assert report.main(["draft", "--end", "2026-11-23", "--config", str(cfgp)]) == 0
+    assert "kb is not configured" not in capsys.readouterr().err
+    saved = report.from_json((local / "reports" / "2026-11-23.json").read_text())
+    assert [f.id for f in saved.followups] == ["2026-11-09-R1"]

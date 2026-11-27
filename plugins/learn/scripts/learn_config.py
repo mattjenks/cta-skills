@@ -193,3 +193,7 @@ def reports_dir(cfg: LearnConfig) -> Path:
 
 def local_dir(cfg: LearnConfig) -> Path:
     return cfg.reports_dir
+
+
+def decisions_path(cfg: LearnConfig) -> Path:
+    return cfg.reports_dir / "decisions.jsonl"

@@ -2,7 +2,6 @@ import { expect, test } from 'claude-code/testing'
 
 const HOME = '/home/tester'
 const KB = '/kb'
-const LIVE = `${KB}/learn`
 const LOCAL = `${HOME}/.local/share/cta/learn`
 const PANE = {
   plugin: 'learn',
@@ -114,7 +113,7 @@ test('an undecided recommendation shows three buttons', async ($, on) => {
 
 test('a decided recommendation shows its decision and no buttons', async ($, on) => {
   seed(on, base({
-    [`${LIVE}/decisions.jsonl`]: [
+    [`${LOCAL}/decisions.jsonl`]: [
       JSON.stringify({ id: '2026-11-30-R1', decision: 'accept', issue_url: 'https://github.com/o/r/issues/3', reason: '', date: '2026-11-30' }),
       'not json',
     ].join('\n'),
@@ -131,7 +130,7 @@ test('a decided recommendation shows its decision and no buttons', async ($, on)
 
 test('an issue link that is not github is not shown', async ($, on) => {
   seed(on, base({
-    [`${LIVE}/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R1', decision: 'accept', issue_url: 'https://evil.example/x', reason: '' }),
+    [`${LOCAL}/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R1', decision: 'accept', issue_url: 'https://evil.example/x', reason: '' }),
   }))
   const ui = await $.ui.mount(PANE)
 
@@ -247,21 +246,6 @@ test('pane ignores old report worktree', async ($, on) => {
   await ui.unmount()
 })
 
-test('decisions still read from kb and learn-decisions', async ($, on) => {
-  const WT = `${HOME}/.local/share/cta/kb-worktrees`
-  seed(on, base({
-    [`${LIVE}/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R1', decision: 'accept', issue_url: '', reason: '' }),
-    [`${WT}/learn-decisions/learn/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R2', decision: 'defer', issue_url: '', reason: '' }),
-  }))
-  const ui = await $.ui.mount(PANE)
-
-  expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-R1' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-R2' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /accept/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /defer/ })).toBeDefined()
-  await ui.unmount()
-})
-
 test('without kb the reports still list and decisions are empty', async ($, on) => {
   seed(on, base({ [`${HOME}/.config/cta/config.toml`]: '[learn]\n' }))
   const ui = await $.ui.mount(PANE)
@@ -272,12 +256,146 @@ test('without kb the reports still list and decisions are empty', async ($, on) 
   await ui.unmount()
 })
 
-test('kb_dir that is absolute or climbs falls back to learn', async ($, on) => {
-  seed(on, base({
-    [`${HOME}/.config/cta/config.toml`]: `kb = "${KB}"\n[learn]\nkb_dir = "../evil"\n`,
-  }))
-  const ui = await $.ui.mount(PANE)
-
-  expect(await ui.find({ type: 'Select' })).toBeDefined()
-  await ui.unmount()
+// Rot audit: items come from the report JSON, decisions from the one local file.
+const rot = (id: string, over: Record<string, unknown> = {}) => ({
+  id,
+  location: `plugins/x/${id}`,
+  problem: `problem ${id}`,
+  fix: `fix ${id}`,
+  fingerprint: `fp|${id}`,
+  accept: true,
+  repo: 'owner/repo',
+  ...over,
 })
+
+const withRot = (items: Record<string, unknown>[], kind = 'broken', md = '# Report of the week') =>
+  base({
+    [`${LOCAL}/reports/2026-11-30.md`]: md,
+    [`${LOCAL}/reports/2026-11-30.json`]: JSON.stringify({
+      date: '2026-11-30',
+      status: 'green',
+      headline: 'h',
+      recommendations: [],
+      rot: { broken: [], stale: [], permission: [], [kind]: items },
+    }),
+  })
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  const pane = { ...PANE, surface } as any
+
+  test(`${surface}: decisions are read from decisions.jsonl in reports_dir`, async ($, on) => {
+    seed(on, base({
+      [`${LOCAL}/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R1', decision: 'accept', issue_url: '' }),
+      [`${KB}/learn/decisions.jsonl`]: JSON.stringify({ id: '2026-11-30-R2', decision: 'accept', issue_url: '' }),
+    }))
+    const ui = await $.ui.mount(pane)
+
+    expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-R1' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-R2' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test(`${surface}: a rot item shows Accept and Dismiss; a connector shows Dismiss only`, async ($, on) => {
+    seed(on, withRot([
+      rot('2026-11-30-B1'),
+      rot('2026-11-30-B2', { accept: false }),
+    ]))
+    const ui = await $.ui.mount(pane)
+
+    expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-B1' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'reject:2026-11-30-B1' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-B2' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'reject:2026-11-30-B2' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'defer:2026-11-30-B1' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /Rot audit/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /problem 2026-11-30-B1/ })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test(`${surface}: Accept on a rot item runs learn:decide`, async ($, on) => {
+    seed(on, withRot([rot('2026-11-30-S1')], 'stale'))
+    const sent = submits(on)
+    const ui = await $.ui.mount(pane)
+
+    await ui.press({ key: 'accept:2026-11-30-S1' })
+
+    expect(sent).toEqual(['/learn:decide 2026-11-30-S1 accept'])
+    await ui.unmount()
+  })
+
+  test(`${surface}: Dismiss opens the reason box and Send runs reject with the reason`, async ($, on) => {
+    seed(on, withRot([rot('2026-11-30-P1')], 'permission'))
+    const sent = submits(on)
+    const ui = await $.ui.mount(pane)
+
+    expect(await ui.find({ type: 'Input', key: 'reason:2026-11-30-P1' })).toBeUndefined()
+    await ui.press({ key: 'reject:2026-11-30-P1' })
+    expect(await ui.find({ type: 'Input', key: 'reason:2026-11-30-P1' })).toBeDefined()
+    await ui.input({ key: 'reason:2026-11-30-P1', text: 'not a problem\n', kind: 'change' })
+    await ui.press({ key: 'send:2026-11-30-P1' })
+
+    expect(sent).toEqual(['/learn:decide 2026-11-30-P1 reject\nnot a problem'])
+    await ui.unmount()
+  })
+
+  test(`${surface}: a decided rot item shows its decision and issue link, no buttons`, async ($, on) => {
+    seed(on, {
+      ...withRot([rot('2026-11-30-B1'), rot('2026-11-30-B2')]),
+      [`${LOCAL}/decisions.jsonl`]: JSON.stringify({
+        id: '2026-11-30-B1', decision: 'accept', issue_url: 'https://github.com/o/r/issues/9',
+      }),
+    })
+    const ui = await $.ui.mount(pane)
+
+    expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-B1' })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'reject:2026-11-30-B1' })).toBeUndefined()
+    expect(await ui.find({ type: 'Text', text: /accept/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /issues\/9/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'accept:2026-11-30-B2' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test(`${surface}: a rot item without an ID (an old report) shows no buttons`, async ($, on) => {
+    const old = { location: 'a/b', problem: 'old problem', fix: 'old fix' }
+    seed(on, withRot([old, old]))
+    const sent = submits(on)
+    const ui = await $.ui.mount(pane)
+
+    expect(await ui.find({ type: 'Text', text: /old problem/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', text: /Accept|Dismiss/ })).toBeUndefined()
+    expect(sent).toEqual([])
+    await ui.unmount()
+  })
+
+  test(`${surface}: a rot ID that is not valid shows no buttons`, async ($, on) => {
+    seed(on, withRot([rot('2026-11-30-B1; reboot')]))
+    const ui = await $.ui.mount(pane)
+
+    expect(await ui.find({ type: 'Button', text: /Accept|Dismiss/ })).toBeUndefined()
+    await ui.unmount()
+  })
+
+  test(`${surface}: 40 rot items all draw, each with a unique key`, async ($, on) => {
+    const items = Array.from({ length: 40 }, (_, i) => rot(`2026-11-30-B${i + 1}`))
+    seed(on, withRot(items))
+    const ui = await $.ui.mount(pane)
+
+    for (let i = 1; i <= 40; i++) {
+      expect(await ui.find({ key: `rot:2026-11-30-B${i}` })).toBeDefined()
+      expect(await ui.find({ type: 'Button', key: `accept:2026-11-30-B${i}` })).toBeDefined()
+    }
+    await ui.unmount()
+  })
+
+  test(`${surface}: the markdown is drawn without its Rot audit section`, async ($, on) => {
+    const md = '# Week\n\nintro\n\n## Rot audit\n\n- RAWROT item\n\n## Next\n\nafter'
+    seed(on, withRot([rot('2026-11-30-B1')], 'broken', md))
+    const ui = await $.ui.mount(pane)
+
+    const text = String((await ui.find({ type: 'Markdown' }))?.props.text)
+    expect(text).not.toMatch(/Rot audit|RAWROT/)
+    expect(text).toMatch(/intro/)
+    expect(text).toMatch(/## Next/)
+    await ui.unmount()
+  })
+}

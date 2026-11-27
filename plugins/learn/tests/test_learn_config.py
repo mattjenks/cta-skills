@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 import learn_config
-from learn_config import Delivery, LearnConfig, learn_dir, load_learn_config
+from learn_config import Delivery, LearnConfig, decisions_path, learn_dir, load_learn_config
 
 
 def _write(tmp_path, text):
@@ -123,3 +123,8 @@ reports_dir = {value}
 def test_learn_dir_requires_kb():
     with pytest.raises(ValueError):
         learn_dir(LearnConfig(kb=None))
+
+
+def test_decisions_path_is_in_reports_dir(tmp_path):
+    cfg = LearnConfig(kb=None, reports_dir=tmp_path / "local")
+    assert decisions_path(cfg) == tmp_path / "local" / "decisions.jsonl"

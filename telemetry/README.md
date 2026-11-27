@@ -143,7 +143,15 @@ macOS notification "CTA telemetry backup failed: <reason>".
 destination for older dates are deleted; other files there are left alone. A missing local folder is
 success. A failure here notifies but never stops the telemetry copy or its pruning, and the run exits 1.
 
-**Restore:** the files are plain JSONL (OTLP JSON from the collector's file exporter). Copy the
+**Decision log:** the same run copies `decisions.jsonl` (the learn decisions, beside `reports/` in
+the local folder) to `learn/decisions.jsonl` beside `backup_dir`. Only a plain file is copied, and only
+when it is at least as large as the backup; the log is append-only, so a shorter local file (a reset
+folder or a new Mac) never overwrites it. A missing local file is success, the backup is never
+deleted, and a failure notifies without stopping the other copies.
+
+**Restore:** to restore the decision log on a new Mac, copy `learn/decisions.jsonl` from the backup
+folder to `<[learn] reports_dir>/decisions.jsonl` (default `~/.local/share/cta/learn/decisions.jsonl`)
+before the first learn run, so dismissed items stay dismissed. The telemetry files are plain JSONL (OTLP JSON from the collector's file exporter). Copy the
 needed `otel-*.jsonl` / `otel-live-*.jsonl` files from the backup folder back into
 `~/.local/share/cta/telemetry/archive/` for reference or `jq` analysis. Re-ingesting into Loki or
 Prometheus is a manual step; the archive is the raw record, not a database dump.

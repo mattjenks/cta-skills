@@ -9,7 +9,7 @@ One `Report` object, three views. Every external string passes through one escap
 never as zero.
 
 Reports are written to the local folder (`[learn] reports_dir`, default `~/.local/share/cta/learn`),
-not to the knowledge base; only `decisions.jsonl` is read from the knowledge base.
+not to the knowledge base; `decisions.jsonl` is read from the same folder.
 """
 
 from __future__ import annotations
@@ -113,10 +113,6 @@ def _count(n: int | None) -> str:
     return "no data" if n is None else str(n)
 
 
-def _more(r: Report, extra: int) -> Link:
-    return Link(f"+{extra} more", r.links.get("grafana", ""))
-
-
 def _panel_link(r: Report, cand: Candidate) -> Link | str:
     url = r.links.get(f"panel:{cand.panel}")
     return Link(cand.panel, url) if url else cand.panel
@@ -188,10 +184,8 @@ def _sections(r: Report) -> list[tuple[str, list[tuple]]]:
             rotb.append(("p", "None."))
             continue
         for it in items:
-            rotb.append(("li", [f"{it.location}: {it.problem}. Fix: {it.fix}"]))
-        extra = r.rot_totals.get(kind, len(items)) - len(items)
-        if extra > 0:
-            rotb.append(("li", [_more(r, extra)]))
+            line = f"{it.location}: {it.problem}. Fix: {it.fix}"
+            rotb.append(("li", [f"{it.id} {line}" if it.id else line]))
     out.append(("Rot audit", rotb))
 
     health = [("li", [f"{k}: {v or 'no data'}"]) for k, v in r.health.items()]
@@ -267,6 +261,13 @@ def to_json(r: Report) -> str:
     return json.dumps(asdict(r), indent=2, sort_keys=False)
 
 
+def assign_rot_ids(items: dict[str, list[RotItem]], day: str) -> None:
+    """Set `<day>-<B|S|P><n>` on every item, in report order within each kind."""
+    for kind, letter in (("broken", "B"), ("stale", "S"), ("permission", "P")):
+        for n, it in enumerate(items.get(kind, []), 1):
+            it.id = f"{day}-{letter}{n}"
+
+
 def from_json(text: str) -> Report:
     d = json.loads(text)
     d["top"] = [SkillUsage(**s) for s in d["top"]]
@@ -332,9 +333,6 @@ def main(argv: list[str] | None = None) -> int:
     if when is None:
         return 2
     cfg = learn_config.load_learn_config(Path(args.config) if args.config else None)
-    if cfg.kb is None:
-        print("kb is not configured", file=sys.stderr)
-        return 2
     reports = _reports_dir(cfg)
 
     if args.cmd == "draft":
@@ -484,15 +482,8 @@ def _moved(before: float, now: float | None, week: Week, skill: str) -> str:
 
 
 def _decision_files(cfg) -> list[Path]:
-    """The decisions log in the checkout, then the one on the `learn/decisions` worktree.
-
-    A decision is written to the worktree first; it is in the checkout only after its pull
-    request merges and the checkout is updated.
-    """
-    import decide  # deferred: decide imports this module
-    files = [learn_config.learn_dir(cfg) / "decisions.jsonl"]
-    files.append(decide.WORKTREE_ROOT / "learn-decisions" / cfg.kb_dir / "decisions.jsonl")
-    return files
+    """The local decisions log, in `[learn] reports_dir`."""
+    return [learn_config.decisions_path(cfg)]
 
 
 def _followups(cfg, week: Week, reports: Path, end: date,
@@ -604,10 +595,12 @@ def build(cfg: learn_config.LearnConfig, end: date) -> Report:
 def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candidate]]:
     week = gather.gather(cfg, end)
     reports = learn_config.reports_dir(cfg)
-    decisions = _decision_files(cfg) if cfg.kb else [Path("/nonexistent")]
+    decisions = _decision_files(cfg)
     top = candidates.top_skills(week)
     cands, over, cand_errors = candidates.select(week, cfg, decisions)
-    items, totals, rot_errors = rot.run_rot(week, cfg)
+    rejected = candidates.suppressed(decisions)
+    items, totals, rot_errors = rot.run_rot(week, cfg, rejected)
+    assign_rot_ids(items, end.isoformat())
 
     errors = list(week.errors) + list(cand_errors) + list(rot_errors)
     errors += [f"config: {n}" for n in cfg.notes]
@@ -618,7 +611,7 @@ def _build(cfg: learn_config.LearnConfig, end: date) -> tuple[Report, list[Candi
         errors.append(NO_EXCLUDE_NOTE)  # a note: it does not turn the status red
 
     new_rot = _new_rot(items, _previous_report(reports, end))
-    followups = _followups(cfg, week, reports, end, decisions) if cfg.kb else []
+    followups = _followups(cfg, week, reports, end, decisions)
     recs = [Recommendation(id=f"{end.isoformat()}-R{n}", candidate=c)
             for n, c in enumerate(cands, 1)]
     worse = [f for f in followups if f.moved == "worse"]

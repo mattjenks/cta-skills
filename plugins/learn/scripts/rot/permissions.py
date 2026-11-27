@@ -43,9 +43,11 @@ def check(week, cfg) -> list[RotItem]:
                 continue
             if counter is blocked:
                 made = _common.item("permission", rule, f"blocked by a rule {n} times",
-                                    f"review the deny rule for {rule} if it should be allowed")
+                                    f"review the deny rule for {rule} if it should be allowed",
+                                    fingerprint=f"permission|{rule}|blocked")
             else:
                 made = _common.item("permission", rule, f"prompted {n} times",
-                                    f"add an allow rule: {rule}")
+                                    f"add an allow rule: {rule}",
+                                    fingerprint=f"permission|{rule}|prompted")
             rows.append((-n, rule, made))
     return [row[2] for row in sorted(rows, key=lambda r: r[:2])]

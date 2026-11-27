@@ -3,7 +3,7 @@ import type { Register } from 'claude-code'
 
 const PANE = 'cta-reports'
 const DATE = /^\d{4}-\d{2}-\d{2}$/
-const REC_ID = /^\d{4}-\d{2}-\d{2}-R\d+$/
+const REC_ID = /^\d{4}-\d{2}-\d{2}-(?:R[1-5]|[BSP][1-9]\d{0,3})$/
 const ISSUE = /^https:\/\/github\.com\/\S+$/
 const DECISIONS = ['accept', 'defer', 'reject']
 const SHOWN = 5
@@ -21,9 +21,16 @@ const drafts = atom(
 
 type Row = { id: string; decision: string; issue_url: string }
 type Rec = { id: string; skill: string; problem: string }
-// reports: the local reports folder; decisionRoots: the live knowledge-base
-// log first, then the learn-decisions worktree (empty when kb is unset).
-type Sources = { reports: string; decisionRoots: string[] }
+type RotItem = {
+  id: string
+  location: string
+  problem: string
+  fix: string
+  accept: boolean
+}
+const ROT_KINDS = ['broken', 'stale', 'permission'] as const
+// reports: the local reports folder; decisions: the one local decision log.
+type Sources = { reports: string; decisions: string }
 
 // Control characters and newlines to a space, so report text and a typed
 // reason stay one line.
@@ -33,15 +40,10 @@ const clean = (text: unknown): string =>
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .trim()
 
-// Only three keys are needed from the CTA config: top-level `kb`, and `kb_dir`
-// and `reports_dir` inside [learn]. Quoted string values only.
-function parseConfig(
-  text: string,
-  home: string,
-): { kb?: string; kbDir: string; reportsDir: string } {
+// Only one key is needed from the CTA config: `reports_dir` inside [learn].
+// Quoted string values only.
+function parseReportsDir(text: string, home: string): string {
   let section = ''
-  let kb: string | undefined
-  let kbDir = 'learn'
   let reportsDir = `${home}/.local/share/cta/learn`
   for (const raw of text.split('\n')) {
     const line = raw.trim()
@@ -53,20 +55,19 @@ function parseConfig(
     const kv = /^([A-Za-z_]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(line)
     if (!kv) continue
     const value = kv[2] ?? kv[3] ?? ''
-    if (section === '' && kv[1] === 'kb') {
-      const full =
-        value === '~' ? home : value.startsWith('~/') ? `${home}/${value.slice(2)}` : value
-      if (full.startsWith('/')) kb = full
-    } else if (section === 'learn' && kv[1] === 'kb_dir') {
-      const ok = value.trim() !== '' && !value.startsWith('/') && !value.split('/').includes('..')
-      kbDir = ok ? value : 'learn'
-    } else if (section === 'learn' && kv[1] === 'reports_dir') {
+    if (section === 'learn' && kv[1] === 'reports_dir') {
       const full =
         value === '~' ? home : value.startsWith('~/') ? `${home}/${value.slice(2)}` : value
       if (full.startsWith('/') && !full.split('/').includes('..')) reportsDir = full
     }
   }
-  return { kb, kbDir, reportsDir }
+  return reportsDir
+}
+
+// The report without its "## Rot audit" section: from that heading, at a line
+// start, to the next "## " heading. The pane draws the items from the JSON.
+function stripRot(md: string): string {
+  return md.replace(/^## Rot audit[^\n]*(?:\n(?!## )[^\n]*)*\n?/m, '')
 }
 
 async function readText($: any, path: string): Promise<string | undefined> {
@@ -91,11 +92,8 @@ async function sources($: any): Promise<Sources | undefined> {
   const home = await $.env.get('HOME')
   if (!home) return undefined
   const config = (await readText($, `${home}/.config/cta/config.toml`)) ?? ''
-  const { kb, kbDir, reportsDir } = parseConfig(config, home)
-  const decisionRoots = kb
-    ? [`${kb}/${kbDir}`, `${home}/.local/share/cta/kb-worktrees/learn-decisions/${kbDir}`]
-    : []
-  return { reports: `${reportsDir}/reports`, decisionRoots }
+  const reportsDir = parseReportsDir(config, home)
+  return { reports: `${reportsDir}/reports`, decisions: `${reportsDir}/decisions.jsonl` }
 }
 
 // S8: each date is checked before it is listed or used in a path.
@@ -111,25 +109,23 @@ async function listDates($: any, src: Sources): Promise<string[]> {
   return [...seen].sort().reverse().slice(0, SHOWN)
 }
 
-// The latest row of an ID wins; the live log is read first.
+// The latest row of an ID wins.
 async function loadDecisions($: any, src: Sources): Promise<Map<string, Row>> {
   const rows = new Map<string, Row>()
-  for (const root of src.decisionRoots) {
-    const text = await readText($, `${root}/decisions.jsonl`)
-    for (const line of (text ?? '').split('\n')) {
-      let row: any
-      try {
-        row = JSON.parse(line)
-      } catch {
-        continue
-      }
-      if (row && typeof row.id === 'string' && typeof row.decision === 'string') {
-        rows.set(row.id, {
-          id: row.id,
-          decision: row.decision,
-          issue_url: String(row.issue_url ?? ''),
-        })
-      }
+  const text = await readText($, src.decisions)
+  for (const line of (text ?? '').split('\n')) {
+    let row: any
+    try {
+      row = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (row && typeof row.id === 'string' && typeof row.decision === 'string') {
+      rows.set(row.id, {
+        id: row.id,
+        decision: row.decision,
+        issue_url: String(row.issue_url ?? ''),
+      })
     }
   }
   return rows
@@ -139,7 +135,7 @@ async function loadReport(
   $: any,
   src: Sources,
   date: string,
-): Promise<{ md: string | undefined; recs: Rec[] }> {
+): Promise<{ md: string | undefined; recs: Rec[]; rot: RotItem[] }> {
   const md = await readText($, `${src.reports}/${date}.md`)
   let recs: Rec[] = []
   const data = (await readJson($, `${src.reports}/${date}.json`)) as any
@@ -150,7 +146,21 @@ async function loadReport(
       problem: clean(r?.problem),
     }))
   }
-  return { md, recs }
+  const rot: RotItem[] = []
+  for (const kind of ROT_KINDS) {
+    const items = data?.rot?.[kind]
+    if (!Array.isArray(items)) continue
+    for (const r of items) {
+      rot.push({
+        id: clean(r?.id),
+        location: clean(r?.location),
+        problem: clean(r?.problem),
+        fix: clean(r?.fix),
+        accept: r?.accept !== false,
+      })
+    }
+  }
+  return { md, recs, rot }
 }
 
 // S5: the ID and the decision are checked before anything is submitted.
@@ -206,7 +216,7 @@ export const register: Register = on => {
     }
     const pick = await read($, selected)
     const date = dates.includes(pick) ? pick : (dates[0] ?? '')
-    const { md, recs } = await loadReport($, src, date)
+    const { md, recs, rot } = await loadReport($, src, date)
     const decided = await loadDecisions($, src)
     const typing = await read($, drafts)
 
@@ -224,7 +234,7 @@ export const register: Register = on => {
         {md === undefined ? (
           <Text dimColor>No report text for {date}.</Text>
         ) : (
-          <Markdown text={md} />
+          <Markdown text={stripRot(md)} />
         )}
         {recs.map(rec => {
           if (!REC_ID.test(rec.id)) {
@@ -278,6 +288,76 @@ export const register: Register = on => {
                     key={`send:${rec.id}`}
                     dimColor={isBlank}
                     onPress={() => (isBlank ? undefined : send($, rec.id, 'reject', draft))}
+                  >
+                    Send
+                  </Button>
+                </Box>
+              )}
+            </Box>
+          )
+        })}
+        {rot.length > 0 && <Text>Rot audit</Text>}
+        {rot.map((item, i) => {
+          const where = `${item.location}: ${item.problem}`
+          const detail = `Fix: ${item.fix}`
+          // An old report's item has no valid ID: it is shown, with no buttons.
+          if (!REC_ID.test(item.id)) {
+            return (
+              <Box key={`rot:n${i}`} flexDirection="column">
+                <Text>{where}</Text>
+                <Text dimColor>{detail}</Text>
+              </Box>
+            )
+          }
+          const row = decided.get(item.id)
+          const title = `${item.id} ${where}`
+          if (row) {
+            return (
+              <Box key={`rot:${item.id}`} flexDirection="column">
+                <Text>{title}</Text>
+                <Text dimColor>{detail}</Text>
+                <Text dimColor>Decision: {clean(row.decision)}</Text>
+                {ISSUE.test(row.issue_url) && <Text dimColor>{clean(row.issue_url)}</Text>}
+              </Box>
+            )
+          }
+          const draft = typing[item.id]
+          const isBlank = clean(draft) === ''
+          return (
+            <Box key={`rot:${item.id}`} flexDirection="column">
+              <Text>{title}</Text>
+              <Text dimColor>{detail}</Text>
+              <Box>
+                {item.accept && (
+                  <Button key={`accept:${item.id}`} onPress={() => send($, item.id, 'accept')}>
+                    Accept
+                  </Button>
+                )}
+                <Button
+                  key={`reject:${item.id}`}
+                  onPress={() => {
+                    void update($, drafts, all => ({ ...all, [item.id]: all[item.id] ?? '' }))
+                  }}
+                >
+                  Dismiss
+                </Button>
+              </Box>
+              {draft !== undefined && (
+                <Box>
+                  <Input
+                    key={`reason:${item.id}`}
+                    placeholder="Why dismiss?"
+                    value={draft}
+                    submitLabel="send"
+                    onInput={value => {
+                      void update($, drafts, all => ({ ...all, [item.id]: value }))
+                    }}
+                    onSubmit={value => send($, item.id, 'reject', value)}
+                  />
+                  <Button
+                    key={`send:${item.id}`}
+                    dimColor={isBlank}
+                    onPress={() => (isBlank ? undefined : send($, item.id, 'reject', draft))}
                   >
                     Send
                   </Button>
