@@ -14,7 +14,7 @@ import decide
 import gather
 import learn_config
 import report
-from model import Candidate, Recommendation, Report, SkillUsage, Week
+from model import Candidate, Recommendation, Report, RotItem, SkillUsage, Week
 
 RID = "2026-11-23-R1"
 FALLBACK = "fallback-org/fallback-repo"
@@ -27,7 +27,8 @@ args = sys.argv[1:]
 with open(os.path.join(state, "calls.jsonl"), "a") as fh:
     fh.write(json.dumps(args) + "\\n")
 if args[:1] == ["api"]:
-    print(os.environ.get("GH_PUSH", "true"))
+    print(os.environ.get("GH_PRIVATE", "true") if ".private" in args
+          else os.environ.get("GH_PUSH", "true"))
 elif args[:2] == ["issue", "create"]:
     n = sum(1 for line in open(os.path.join(state, "calls.jsonl")) if '"issue", "create"' in line)
     print(f"https://github.com/stub/stub/issues/{{n}}")
@@ -160,7 +161,7 @@ def test_accept_files_on_skill_repo_when_writable(env):
     assert set(row) >= {"id", "date", "skill", "fingerprint", "decision", "reason", "repo",
                         "issue_url", "at"}
     (create,) = env.gh_calls("issue", "create")
-    assert create[create.index("--repo") + 1] == SKILL_REPO
+    assert f"--repo={SKILL_REPO}" in create
     assert create[create.index("--title") + 1] == f"alpha: cost_growth ({RID})"
     assert create[create.index("--label") + 1] == "cta-learn"
     assert "--body-file" in create
@@ -396,3 +397,274 @@ def test_gitleaks_ignores_inherited_config_env(monkeypatch):
     argv, passed = next((a, e) for a, e in seen if a[0] == "gitleaks")
     assert "GITLEAKS_CONFIG" not in passed
     assert "GITLEAKS_CONFIG_TOML" not in passed
+
+
+# ---------------------------------------------------------------- rot items
+
+S1 = "2026-11-23-S1"
+
+
+def _stale(repo="owner/repo", fp="stale|CLAUDE.md|docs/gone.md"):
+    return RotItem("stale", "CLAUDE.md:12", "names docs/gone.md, which does not exist",
+                   "update or remove the line", fingerprint=fp, repo=repo)
+
+
+def _perm(blocked=False):
+    rule = "Bash(git:*)"
+    if blocked:
+        return RotItem("permission", rule, "blocked by a rule 4 times",
+                       f"review the deny rule for {rule} if it should be allowed",
+                       fingerprint=f"permission|{rule}|blocked")
+    return RotItem("permission", rule, "prompted 5 times", f"add an allow rule: {rule}",
+                   fingerprint=f"permission|{rule}|prompted")
+
+
+def _broken(problem="link to missing.md does not exist"):
+    return RotItem("broken", "skills/x/SKILL.md:7", problem, "fix the link or restore the file",
+                   fingerprint="broken|skills/x/SKILL.md|link|missing.md", repo="owner/repo")
+
+
+def _connector():
+    return RotItem("broken", "srv", "3 connection attempts ended failed", "sign in again",
+                   fingerprint="broken|connector|srv|failed", accept=False)
+
+
+def _put_rot(env, broken=(), stale=(), permission=()):
+    rep = _report()
+    rep.rot = {"broken": list(broken), "stale": list(stale), "permission": list(permission)}
+    report.assign_rot_ids(rep.rot, rep.date)
+    env.write_report(rep)
+
+
+def _capture_issue(monkeypatch):
+    seen = {}
+    real = decide._gh
+
+    def spy(argv, **kw):
+        if argv[:2] == ["issue", "create"]:
+            seen["title"] = argv[argv.index("--title") + 1]
+            seen["body"] = Path(argv[argv.index("--body-file") + 1]).read_text()
+        return real(argv, **kw)
+    monkeypatch.setattr(decide, "_gh", spy)
+    return seen
+
+
+def test_reject_rot_logs_fingerprint(env):
+    _put_rot(env, stale=[_stale()])
+    row = decide.decide(env.cfg, S1, "reject", "intended")
+    assert row["fingerprint"] == "stale|CLAUDE.md|docs/gone.md"
+    assert row["signal"] == "rot:stale" and row["kind"] == "stale"
+    assert row["skill"] == "" and row["metric"] == "" and row["value"] is None
+    assert row["decision"] == "reject" and row["reason"] == "intended"
+    assert env.rows() == [row]
+    assert env.gh_calls("issue", "create") == []
+
+
+def test_accept_stale_files_issue_in_item_repo(env, monkeypatch):
+    _put_rot(env, stale=[_stale()])
+    seen = _capture_issue(monkeypatch)
+    row = decide.decide(env.cfg, S1, "accept", None)
+    assert row["repo"] == "owner/repo" and row["signal"] == "rot:stale"
+    (create,) = env.gh_calls("issue", "create")
+    assert "--repo=owner/repo" in create
+    assert seen["title"] == "Stale rule: `CLAUDE.md` names `docs/gone.md`"
+    lines = seen["body"].splitlines()
+    assert "File: `CLAUDE.md`, line `12`" in lines
+    assert "Missing: `docs/gone.md`" in lines
+    assert "Fix: update or remove the line" in lines
+    assert lines[-2:] == ["Report: 2026-11-23", f"ID: {S1}"]
+    assert env.rows() == [row]
+
+
+def test_accept_stale_unwritable_repo_uses_fallback(env, monkeypatch):
+    _put_rot(env, stale=[_stale()])
+    monkeypatch.setenv("GH_PUSH", "false")
+    row = decide.decide(env.cfg, S1, "accept", None)
+    assert row["repo"] == FALLBACK
+    (create,) = env.gh_calls("issue", "create")
+    assert f"--repo={FALLBACK}" in create
+
+
+def test_accept_stale_no_repo_no_fallback_exits_3(env):
+    _put_rot(env, stale=[_stale(repo="")])
+    cfg = learn_config.LearnConfig(kb=env.kb, reports_dir=env.local)
+    with pytest.raises(decide.DecideError) as err:
+        decide.decide(cfg, S1, "accept", None)
+    assert err.value.code == 3 and "no repo to file in" in str(err.value)
+    assert env.gh_calls("issue", "create") == [] and env.rows() == []
+
+
+def test_accept_stale_public_fallback_exits_3(env, monkeypatch):
+    _put_rot(env, stale=[_stale(repo="")])
+    monkeypatch.setenv("GH_PRIVATE", "false")
+    with pytest.raises(decide.DecideError) as err:
+        decide.decide(env.cfg, S1, "accept", None)
+    assert err.value.code == 3
+    assert env.gh_calls("issue", "create") == [] and env.rows() == []
+
+
+def test_accept_stale_private_fallback_files(env):
+    _put_rot(env, stale=[_stale(repo="")])
+    assert decide.decide(env.cfg, S1, "accept", None)["repo"] == FALLBACK
+
+
+def test_accept_permission_uses_fallback(env, monkeypatch):
+    _put_rot(env, permission=[_perm(), _perm(blocked=True)])
+    seen = _capture_issue(monkeypatch)
+    monkeypatch.setenv("GH_PRIVATE", "false")  # only stale items need a private fallback
+    row = decide.decide(env.cfg, "2026-11-23-P1", "accept", None)
+    assert row["repo"] == FALLBACK
+    assert seen["title"] == "Permission: add `Bash(git:*)`"
+    lines = seen["body"].splitlines()
+    assert "Rule: `Bash(git:*)`" in lines
+    assert "This week: `prompted 5 times`" in lines
+    assert "Settings: ~/.claude/settings.json, permissions.allow" in lines
+    assert "Applying it needs the owner's approval." in lines
+    decide.decide(env.cfg, "2026-11-23-P2", "accept", None)
+    assert seen["title"] == "Permission: review deny rule `Bash(git:*)`"
+
+
+def test_accept_broken_skill_issue(env, monkeypatch):
+    _put_rot(env, broken=[_broken()])
+    seen = _capture_issue(monkeypatch)
+    decide.decide(env.cfg, "2026-11-23-B1", "accept", None)
+    assert seen["title"] == "Broken skill: `link to missing.md does not exist`"
+    lines = seen["body"].splitlines()
+    assert "File: `SKILL.md`" in lines
+    assert "Problem: `link to missing.md does not exist`" in lines
+    assert "Fix: `fix the link or restore the file`" in lines
+
+
+def test_accept_connector_exits_2(env):
+    _put_rot(env, broken=[_connector()])
+    with pytest.raises(decide.DecideError) as err:
+        decide.decide(env.cfg, "2026-11-23-B1", "accept", None)
+    assert err.value.code == 2
+    assert env.gh_calls("issue", "create") == [] and env.rows() == []
+
+
+def test_reject_connector_is_allowed(env):
+    _put_rot(env, broken=[_connector()])
+    row = decide.decide(env.cfg, "2026-11-23-B1", "reject", "known")
+    assert row["fingerprint"] == "broken|connector|srv|failed"
+
+
+def test_defer_rot_exits_2(env):
+    _put_rot(env, stale=[_stale()])
+    with pytest.raises(decide.DecideError) as err:
+        decide.decide(env.cfg, S1, "defer", None)
+    assert err.value.code == 2 and env.rows() == []
+
+
+def test_rot_item_without_id_exits_2(env, monkeypatch):
+    # the 2026-11-26 report shape: rot items carry no id and no fingerprint
+    rep = _report()
+    rep.rot = {"broken": [], "permission": [],
+               "stale": [RotItem("stale", "CLAUDE.md:12", "p", "f")]}
+    env.write_report(rep)
+    assert env.cli(monkeypatch, S1, "reject", "--reason-stdin", stdin="x") == 2
+    assert env.cli(monkeypatch, S1, "accept") == 2
+    assert env.rows() == [] and env.gh_calls("issue", "create") == []
+
+
+def test_unknown_rot_id_exits_2(env, monkeypatch):
+    _put_rot(env, stale=[_stale()])
+    assert env.cli(monkeypatch, "2026-11-23-S2", "accept") == 2
+
+
+@pytest.mark.parametrize("fp", ["", "x" * 301, "stale|a\nb", "stale|a\x00b"])
+def test_rot_empty_fingerprint_exits_2(env, fp):
+    _put_rot(env, stale=[_stale(fp=fp)])
+    for decision, reason in (("accept", None), ("reject", "why")):
+        with pytest.raises(decide.DecideError) as err:
+            decide.decide(env.cfg, S1, decision, reason)
+        assert err.value.code == 2
+    assert env.gh_calls("issue", "create") == [] and env.rows() == []
+
+
+def test_rot_issue_values_in_code_spans(env, monkeypatch):
+    _put_rot(env, broken=[_broken("link to @org/team")])
+    seen = _capture_issue(monkeypatch)
+    decide.decide(env.cfg, "2026-11-23-B1", "accept", None)
+    for text in (seen["title"], seen["body"]):
+        assert "`link to @org/team`" in text
+        assert "@org/team" not in text.replace("`link to @org/team`", "")
+
+
+def test_rot_issue_paths_are_masked(env, monkeypatch):
+    _put_rot(env, broken=[_broken("see /home/tester/secret/notes.md")])
+    seen = _capture_issue(monkeypatch)
+    decide.decide(env.cfg, "2026-11-23-B1", "accept", None)
+    assert "/home/tester" not in seen["body"] and "/home/tester" not in seen["title"]
+
+
+def test_rot_title_and_body_scanned_together(env, monkeypatch):
+    _put_rot(env, stale=[_stale()])
+    scanned = []
+    monkeypatch.setattr(decide, "_scan", lambda text: scanned.append(text))
+    decide.decide(env.cfg, S1, "accept", None)
+    (text,) = scanned
+    assert text.startswith("Stale rule: ") and "Missing: `docs/gone.md`" in text
+
+
+def test_rot_title_is_scanned(env, monkeypatch):
+    _put_rot(env, stale=[_stale()])
+
+    def refuse(text):
+        if text.splitlines()[0].startswith("Stale rule"):
+            raise decide.DecideError(4, "secret")
+    monkeypatch.setattr(decide, "_scan", refuse)
+    with pytest.raises(decide.DecideError) as err:
+        decide.decide(env.cfg, S1, "accept", None)
+    assert err.value.code == 4
+    assert env.gh_calls("issue", "create") == [] and env.rows() == []
+
+
+@pytest.mark.skipif(shutil.which("gitleaks") is None, reason="gitleaks not installed")
+def test_rot_issue_body_scanned(env, monkeypatch, capsys):
+    env.use_real_gitleaks(monkeypatch)
+    token = "ghp_" + "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5"
+    _put_rot(env, broken=[_broken(f"the token {token}")])
+    assert env.cli(monkeypatch, "2026-11-23-B1", "accept") == 4
+    assert env.gh_calls("issue", "create") == [] and env.rows() == []
+    assert token not in capsys.readouterr().err
+
+
+def test_rot_missing_gitleaks_fails_closed(env, monkeypatch):
+    _put_rot(env, stale=[_stale()])
+    env.use_no_gitleaks(monkeypatch)
+    assert env.cli(monkeypatch, S1, "accept") == 4
+    assert env.rows() == []
+
+
+def test_rot_accept_row_skipped_by_followups(env):
+    _put_rot(env, stale=[_stale()])
+    decide.decide(env.cfg, S1, "accept", None)
+    week = Week(start=date(2026, 11, 23), end=date(2026, 11, 30))
+    got = report._followups(env.cfg, week, env.local / "reports", date(2026, 11, 30),
+                            report._decision_files(env.cfg))
+    assert got == []
+
+
+def test_rot_repeat_returns_existing_row(env):
+    _put_rot(env, stale=[_stale()])
+    first = decide.decide(env.cfg, S1, "accept", None)
+    assert decide.decide(env.cfg, S1, "accept", None) == first
+    assert len(env.gh_calls("issue", "create")) == 1
+
+
+@pytest.mark.parametrize("good", ["2026-11-23-B1", "2026-11-23-S12", "2026-11-23-P9999"])
+def test_rot_id_pattern_accepts(good):
+    assert decide.ID_PATTERN.fullmatch(good)
+
+
+@pytest.mark.parametrize("bad", ["2026-11-23-B0", "2026-11-23-S01", "2026-11-23-P10000",
+                                 "2026-11-23-X1", "2026-11-23-R10"])
+def test_rot_id_pattern_rejects(bad):
+    assert not decide.ID_PATTERN.fullmatch(bad)
+
+
+def test_repo_pattern_rejects_leading_dash():
+    assert not decide.REPO_PATTERN.fullmatch("-x/repo")
+    assert not decide.REPO_PATTERN.fullmatch("owner/-repo")
+    assert decide.REPO_PATTERN.fullmatch("owner/repo.name-1")
