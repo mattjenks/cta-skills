@@ -50,11 +50,6 @@ if "--report-path" in args:
 """
 
 
-def git(path, *args):
-    return subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True,
-                          text=True).stdout
-
-
 def _report(skill="alpha", problem="cost grew"):
     cand = Candidate(skill=skill, signal="cost_growth", fingerprint=f"{skill}|cost_growth",
                      metric="cost_ratio", value=2.0, threshold=1.5, sessions=4,
@@ -72,6 +67,17 @@ def _report(skill="alpha", problem="cost grew"):
                   health={}, errors=[], links={})
 
 
+def _record_subprocess(monkeypatch):
+    calls = []
+    real = subprocess.run
+
+    def spy(argv, *a, **kw):
+        calls.append([str(x) for x in argv])
+        return real(argv, *a, **kw)
+    monkeypatch.setattr(decide.subprocess, "run", spy)
+    return calls
+
+
 class Env:
     def __init__(self, tmp_path, monkeypatch):
         self.tmp = tmp_path
@@ -79,7 +85,6 @@ class Env:
         self.local = tmp_path / "local"
         self.state = tmp_path / "gh-state"
         self.state.mkdir()
-        self.wt_root = tmp_path / "worktrees"
         self.events = []
         self.cfg = learn_config.LearnConfig(kb=self.kb, fallback_repo=FALLBACK,
                                             reports_dir=self.local)
@@ -102,18 +107,11 @@ class Env:
         km = tmp_path / "known_marketplaces.json"
         km.write_text(json.dumps({"market-a": {"source": {"repo": SKILL_REPO}}}))
         monkeypatch.setattr(gather, "KNOWN_MARKETPLACES", km)
-        monkeypatch.setattr(decide, "WORKTREE_ROOT", self.wt_root)
         monkeypatch.setattr(decide, "send", lambda event, endpoint: self.events.append(event))
         self.write_report(_report())
 
     def write_report(self, rep):
         self.kb.mkdir(exist_ok=True)
-        if not (self.kb / ".git").exists():
-            git(self.kb, "init", "-b", "main")
-            git(self.kb, "config", "user.name", "Learn Test")
-            git(self.kb, "config", "user.email", "learn-test@example.invalid")
-            git(self.kb, "config", "commit.gpgsign", "false")
-            git(self.kb, "commit", "--allow-empty", "-m", "init")
         reports = self.local / "reports"  # the configured reports_dir, never the knowledge base
         reports.mkdir(parents=True, exist_ok=True)
         (reports / "2026-11-23.json").write_text(report.to_json(rep))
@@ -127,12 +125,8 @@ class Env:
         monkeypatch.setenv("PATH", os.pathsep.join([str(self.bindir), *dirs]))
 
     @property
-    def worktree(self):
-        return self.wt_root / "learn-decisions"
-
-    @property
     def decisions(self):
-        return self.worktree / "learn" / "decisions.jsonl"
+        return learn_config.decisions_path(self.cfg)
 
     def rows(self):
         if not self.decisions.exists():
@@ -172,8 +166,6 @@ def test_accept_files_on_skill_repo_when_writable(env):
     assert "--body-file" in create
     assert env.gh_calls("label", "create")
     assert env.rows() == [row]
-    assert git(env.worktree, "rev-parse", "--abbrev-ref", "HEAD").strip() == "learn/decisions"
-    assert RID in git(env.worktree, "log", "-1", "--format=%s")
 
 
 def test_issue_body_has_the_fields_and_no_evidence(env):
@@ -214,7 +206,7 @@ def test_decide_loads_report_from_reports_dir(env):
 
 def test_decide_ignores_old_report_worktree(env, monkeypatch, capsys):
     (env.local / "reports" / "2026-11-23.json").unlink()
-    old = env.wt_root / "learn-report-2026-11-23" / "learn" / "reports"
+    old = env.tmp / "worktrees" / "learn-report-2026-11-23" / "learn" / "reports"
     old.mkdir(parents=True)
     (old / "2026-11-23.json").write_text(report.to_json(_report()))
     with pytest.raises(decide.DecideError) as err:
@@ -345,109 +337,48 @@ def test_row_feeds_followups_and_suppression(env):
     row = env.rows()[0]
     assert row["signal"] == "cost_growth" and row["metric"] == "cost_ratio"
     assert row["value"] == 2.0
-    # the real layout: the report reads the live checkout, the row sits only on the worktree
     assert not (env.kb / "learn" / "decisions.jsonl").exists()
-    cfg = learn_config.LearnConfig(kb=env.kb, reports_dir=env.kb.parent / "local")
     week = Week(start=date(2026, 11, 23), end=date(2026, 11, 30))
-    got = report._followups(cfg, week, env.kb / "learn" / "reports", date(2026, 11, 30),
-                              report._decision_files(cfg))
+    got = report._followups(env.cfg, week, env.local / "reports", date(2026, 11, 30),
+                            report._decision_files(env.cfg))
     assert [f.id for f in got] == [RID]
 
 
-def test_rejection_suppresses_from_the_worktree(env):
+def test_rejection_suppresses_from_the_local_log(env):
     decide.decide(env.cfg, RID, "reject", "not now")
     assert not (env.kb / "learn" / "decisions.jsonl").exists()
-    files = report._decision_files(learn_config.LearnConfig(kb=env.kb))
+    files = report._decision_files(env.cfg)
+    assert files == [env.local / "decisions.jsonl"]
     assert candidates.suppressed(files) == {"alpha|cost_growth"}
 
 
-def _remote(env, tmp_path):
-    remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True,
-                   capture_output=True)
-    git(env.kb, "remote", "add", "origin", str(remote))
-    git(env.kb, "push", "-u", "origin", "main")
-    git(env.kb, "remote", "set-head", "origin", "main")
-    return remote
+def test_decision_appends_to_local_log(env, monkeypatch):
+    calls = _record_subprocess(monkeypatch)
+    row = decide.decide(env.cfg, RID, "defer", None)
+    assert env.rows() == [row]
+    assert env.decisions == env.local / "decisions.jsonl"
+    assert [c for c in calls if c[0] == "git"] == []
 
 
-def _clone(tmp_path, remote, name):
-    clone = tmp_path / f"clone-{name}"
-    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True,
-                   capture_output=True)
-    git(clone, "config", "user.name", "Learn Test")
-    git(clone, "config", "user.email", "learn-test@example.invalid")
-    git(clone, "config", "commit.gpgsign", "false")
-    return clone
+def test_accept_runs_no_git_or_pr(env, monkeypatch):
+    calls = _record_subprocess(monkeypatch)
+    decide.decide(env.cfg, RID, "accept", None)
+    assert [c for c in calls if c[0] == "git"] == []
+    assert env.gh_calls("pr") == []
+    gh = [c[1:3] for c in calls if c[0] == "gh"]
+    assert ["label", "create"] in gh and ["issue", "create"] in gh
+    assert all(g[0] in ("api", "label", "issue") for g in gh)
 
 
-def test_new_worktree_is_cut_from_the_fetched_default_branch(env, tmp_path):
-    remote = _remote(env, tmp_path)
-    clone = _clone(tmp_path, remote, "a")
-    (clone / "elsewhere.txt").write_text("new on the remote\n")
-    git(clone, "add", "-A")
-    git(clone, "commit", "-m", "remote work")
-    git(clone, "push", "origin", "main")
-    decide.decide(env.cfg, RID, "defer", None)
-    assert (env.worktree / "elsewhere.txt").exists()
-
-
-def test_reused_worktree_is_reset_after_the_decisions_pr_merged(env, tmp_path):
-    remote = _remote(env, tmp_path)
-    decide.decide(env.cfg, RID, "defer", None)  # pushes learn/decisions, opens the PR
-    first = env.rows()[0]
-    # the PR is squash-merged: the default branch gets the row in a different commit
-    clone = _clone(tmp_path, remote, "b")
-    (clone / "learn").mkdir(exist_ok=True)
-    (clone / "learn" / "decisions.jsonl").write_text(json.dumps(first) + "\n")
-    git(clone, "add", "-A")
-    git(clone, "commit", "-m", "squash of the decisions PR")
-    git(clone, "push", "origin", "main")
-    (env.state / "pr").unlink()  # no open PR any more
-    rep = _report()
-    rep.recommendations.append(Recommendation(
-        "2026-11-23-R2", rep.recommendations[0].candidate, problem="p", why="w", change="c",
-        measure="m"))
-    env.write_report(rep)
-    decide.decide(env.cfg, "2026-11-23-R2", "defer", None)
-    ids = [r["id"] for r in env.rows()]
-    assert ids == [RID, "2026-11-23-R2"]  # no duplicate of the merged row
-    assert "squash of the decisions PR" in git(env.worktree, "log", "--format=%s")
-    assert git(remote, "show", "learn/decisions:learn/decisions.jsonl").count("\n") == 2
-    assert len(env.gh_calls("pr", "create")) == 2  # a fresh PR for the new branch state
-
-
-def test_pushes_and_opens_the_pr_once(env, tmp_path):
-    remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True,
-                   capture_output=True)
-    git(env.kb, "remote", "add", "origin", str(remote))
-    git(env.kb, "push", "origin", "main")
-    decide.decide(env.cfg, RID, "defer", None)
-    assert "learn/decisions" in git(remote, "branch", "--list")
-    assert len(env.gh_calls("pr", "create")) == 1
-    rep = _report()
-    rep.recommendations.append(Recommendation(
-        id="2026-11-23-R2", candidate=rep.recommendations[0].candidate, problem="p", why="w",
-        change="c", measure="m"))
-    env.write_report(rep)
-    decide.decide(env.cfg, "2026-11-23-R2", "defer", None)
-    assert len(env.gh_calls("pr", "create")) == 1
-    assert len(env.rows()) == 2
+def test_repeat_id_returns_existing_row_from_local_log(env):
+    first = decide.decide(env.cfg, RID, "defer", None)
+    assert decide.decide(env.cfg, RID, "reject", "changed my mind") == first
+    assert len(env.rows()) == 1
 
 
 def test_send_refuses_non_http_endpoint():
     with pytest.raises(ValueError):
         decide.send({}, "file:///etc/passwd")
-
-
-def test_accept_sets_up_worktree_before_filing(env, monkeypatch):
-    def boom(cfg):
-        raise decide.DecideError(1, "worktree setup failed")
-    monkeypatch.setattr(decide, "_worktree", boom)
-    assert env.cli(monkeypatch, RID, "accept") != 0
-    assert env.gh_calls("issue", "create") == []
-    assert env.rows() == []
 
 
 def test_gitleaks_ignores_inherited_config_env(monkeypatch):

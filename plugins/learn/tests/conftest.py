@@ -12,13 +12,6 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolated_worktree_root(tmp_path_factory, monkeypatch):
-    """No test reads or writes the real ~/.local/share/cta/kb-worktrees."""
-    import decide
-    monkeypatch.setattr(decide, "WORKTREE_ROOT", tmp_path_factory.mktemp("kb-worktrees"))
-
-
-@pytest.fixture(autouse=True)
 def _default_reports_dir_in_tmp(tmp_path_factory, monkeypatch):
     """A LearnConfig built without reports_dir points at a tmp folder, never ~/.local/share/cta.
 
